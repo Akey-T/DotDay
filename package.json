@@ -1,7 +1,7 @@
 {
   "name": "ak-daily",
   "productName": "DotDay",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "DotDay - a minimal desktop widget for habits, events, and notes.",
   "author": "DotDay",
@@ -13,8 +13,8 @@
     "build": "npm run typecheck && electron-vite build",
     "pack": "npm run build && electron-builder --win --x64 --dir",
     "dist": "npm run dist:win",
-    "dist:win": "npm run build && electron-builder --win --x64",
-    "dist:mac": "npm run build && electron-builder --mac --x64 --arm64",
+    "dist:win": "npm run build && electron-builder --win --x64 --publish never",
+    "dist:mac": "npm run build && electron-builder --mac --x64 --arm64 --publish never",
     "preview": "electron-vite preview"
   },
   "build": {
