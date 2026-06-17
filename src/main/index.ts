@@ -3,19 +3,27 @@ import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { AkDailyData, WidgetMode } from '../shared/types';
+import type { AkDailyData, DotDaySettings, WidgetMode } from '../shared/types';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+const defaultSettings: DotDaySettings = {
+  widgetOpacity: 88,
+  reminderLeadMinutes: 5,
+  autoCollapseOnBlur: true,
+};
 
 const defaultData: AkDailyData = {
   habits: [],
   habitRecords: {},
   events: [],
   notes: [],
+  settings: defaultSettings,
 };
 
 let mainWindow: BrowserWindow | null = null;
 let widgetMode: WidgetMode = 'collapsed';
+let autoCollapseOnBlur = defaultSettings.autoCollapseOnBlur;
 let lastCollapsedPosition: { x: number; y: number } | null = null;
 
 const collapsedSize = {
@@ -106,6 +114,7 @@ function placeWindow(mode: WidgetMode, useDefaultPosition = false, notifyRendere
 
 function normalizeData(value: unknown): AkDailyData {
   const incoming = value && typeof value === 'object' ? (value as Partial<AkDailyData>) : {};
+  const incomingSettings = incoming.settings && typeof incoming.settings === 'object' ? (incoming.settings as Partial<DotDaySettings>) : {};
 
   return {
     habits: Array.isArray(incoming.habits) ? incoming.habits : [],
@@ -115,6 +124,20 @@ function normalizeData(value: unknown): AkDailyData {
         : {},
     events: Array.isArray(incoming.events) ? incoming.events : [],
     notes: Array.isArray(incoming.notes) ? incoming.notes : [],
+    settings: {
+      widgetOpacity:
+        typeof incomingSettings.widgetOpacity === 'number'
+          ? Math.min(Math.max(Math.round(incomingSettings.widgetOpacity), 60), 98)
+          : defaultSettings.widgetOpacity,
+      reminderLeadMinutes:
+        typeof incomingSettings.reminderLeadMinutes === 'number'
+          ? Math.min(Math.max(Math.round(incomingSettings.reminderLeadMinutes), 1), 30)
+          : defaultSettings.reminderLeadMinutes,
+      autoCollapseOnBlur:
+        typeof incomingSettings.autoCollapseOnBlur === 'boolean'
+          ? incomingSettings.autoCollapseOnBlur
+          : defaultSettings.autoCollapseOnBlur,
+    },
   };
 }
 
@@ -181,7 +204,7 @@ function createWindow(): void {
   });
 
   mainWindow.on('blur', () => {
-    if (widgetMode === 'expanded') {
+    if (widgetMode === 'expanded' && autoCollapseOnBlur) {
       placeWindow('collapsed', false, true);
     }
   });
@@ -212,6 +235,9 @@ ipcMain.handle('ak-daily:get-data', () => readData());
 ipcMain.handle('ak-daily:save-data', (_event, data: AkDailyData) => writeData(data));
 ipcMain.handle('dotday:set-widget-mode', (_event, mode: WidgetMode) => {
   placeWindow(mode);
+});
+ipcMain.handle('dotday:set-auto-collapse-on-blur', (_event, enabled: boolean) => {
+  autoCollapseOnBlur = enabled;
 });
 ipcMain.handle('dotday:close-window', () => {
   mainWindow?.close();

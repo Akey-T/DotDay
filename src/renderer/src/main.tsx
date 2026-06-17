@@ -9,20 +9,29 @@ import {
   GripVertical,
   MapPin,
   Maximize2,
+  Pencil,
   Plus,
+  Settings,
   Star,
   StickyNote,
   Trash2,
   X,
 } from 'lucide-react';
-import type { AkDailyData, DateKey, EventItem, Habit, QuickNote, WidgetMode } from '../../shared/types';
+import type { AkDailyData, DateKey, DotDaySettings, EventItem, Habit, QuickNote, WidgetMode } from '../../shared/types';
 import './styles.css';
+
+const defaultSettings: DotDaySettings = {
+  widgetOpacity: 88,
+  reminderLeadMinutes: 5,
+  autoCollapseOnBlur: true,
+};
 
 const initialData: AkDailyData = {
   habits: [],
   habitRecords: {},
   events: [],
   notes: [],
+  settings: defaultSettings,
 };
 
 function createId(prefix: string): string {
@@ -139,6 +148,16 @@ function isEventExpired(event: EventItem, now: Date): boolean {
   return getEventEnd(event).getTime() <= now.getTime();
 }
 
+function shouldRemindForEvent(event: EventItem, now: Date, acknowledgedReminderIds: Set<string>, reminderLeadMinutes: number): boolean {
+  if (!event.startTime || acknowledgedReminderIds.has(event.id) || isEventExpired(event, now)) {
+    return false;
+  }
+
+  const startsInMs = getEventStart(event).getTime() - now.getTime();
+
+  return startsInMs >= 0 && startsInMs <= reminderLeadMinutes * 60 * 1000;
+}
+
 function getEventStateRank(event: EventItem, now: Date): number {
   const start = getEventStart(event).getTime();
   const end = getEventEnd(event).getTime();
@@ -200,8 +219,14 @@ function App(): React.JSX.Element {
     important: false,
   });
   const [eventFormOpen, setEventFormOpen] = React.useState(false);
+  const [eventError, setEventError] = React.useState('');
+  const [editingEventId, setEditingEventId] = React.useState<string | null>(null);
+  const [acknowledgedReminderIds, setAcknowledgedReminderIds] = React.useState<Set<string>>(() => new Set());
   const [noteContent, setNoteContent] = React.useState('');
+  const [editingNoteId, setEditingNoteId] = React.useState<string | null>(null);
+  const [noteEditContent, setNoteEditContent] = React.useState('');
   const [calendarOpen, setCalendarOpen] = React.useState(false);
+  const [settingsOpen, setSettingsOpen] = React.useState(false);
   const [calendarMonth, setCalendarMonth] = React.useState(new Date());
   const [selectedDate, setSelectedDate] = React.useState<DateKey>(todayKey);
 
@@ -220,7 +245,7 @@ function App(): React.JSX.Element {
   }, []);
 
   React.useEffect(() => {
-    const timer = window.setInterval(() => setNow(new Date()), 30_000);
+    const timer = window.setInterval(() => setNow(new Date()), 5_000);
 
     return () => window.clearInterval(timer);
   }, []);
@@ -238,9 +263,16 @@ function App(): React.JSX.Element {
 
     return window.akDaily.onWidgetModeChanged((mode) => {
       setCalendarOpen(false);
+      setSettingsOpen(false);
       setWidgetMode(mode);
     });
   }, []);
+
+  React.useEffect(() => {
+    if (window.akDaily) {
+      void window.akDaily.setAutoCollapseOnBlur(data.settings.autoCollapseOnBlur);
+    }
+  }, [data.settings.autoCollapseOnBlur]);
 
   const commitData = React.useCallback((nextData: AkDailyData) => {
     setData(nextData);
@@ -252,11 +284,27 @@ function App(): React.JSX.Element {
   const todayEvents = sortEvents(data.events.filter((event) => event.date === todayKey), now);
   const nextEvent = todayEvents.find((event) => !isEventExpired(event, now)) ?? todayEvents[0];
   const collapsedEvents = nextEvent ? [nextEvent] : [];
+  const reminderEvent = todayEvents.find((event) => shouldRemindForEvent(event, now, acknowledgedReminderIds, data.settings.reminderLeadMinutes));
+  const reminderMinutes = reminderEvent ? Math.max(0, Math.ceil((getEventStart(reminderEvent).getTime() - now.getTime()) / 60_000)) : null;
   const todayNotes = data.notes.filter((note) => note.date === todayKey).sort((first, second) => second.createdAt.localeCompare(first.createdAt));
+  const shellStyle = { '--widget-opacity': String(data.settings.widgetOpacity / 100) } as React.CSSProperties;
 
   function setMode(mode: WidgetMode): void {
     setCalendarOpen(false);
+    setSettingsOpen(false);
     setWidgetMode(mode);
+  }
+
+  function openFromCompact(): void {
+    const activeReminderIds = todayEvents
+      .filter((event) => shouldRemindForEvent(event, now, acknowledgedReminderIds, data.settings.reminderLeadMinutes))
+      .map((event) => event.id);
+
+    if (activeReminderIds.length > 0) {
+      setAcknowledgedReminderIds((currentIds) => new Set([...currentIds, ...activeReminderIds]));
+    }
+
+    setMode('expanded');
   }
 
   function addHabit(event: React.FormEvent): void {
@@ -296,6 +344,13 @@ function App(): React.JSX.Element {
     });
   }
 
+  function updateSettings(nextSettings: DotDaySettings): void {
+    commitData({
+      ...data,
+      settings: nextSettings,
+    });
+  }
+
   function archiveHabit(habitId: string): void {
     commitData({
       ...data,
@@ -303,30 +358,7 @@ function App(): React.JSX.Element {
     });
   }
 
-  function addEvent(event: React.FormEvent): void {
-    event.preventDefault();
-    const title = eventForm.title.trim();
-
-    if (!title || !eventForm.date) {
-      return;
-    }
-
-    const nextEvent: EventItem = {
-      id: createId('event'),
-      title,
-      date: eventForm.date,
-      startTime: eventForm.startTime,
-      endTime: eventForm.endTime,
-      location: eventForm.location.trim(),
-      notes: eventForm.notes.trim(),
-      important: eventForm.important,
-      createdAt: new Date().toISOString(),
-    };
-
-    commitData({
-      ...data,
-      events: [...data.events, nextEvent],
-    });
+  function resetEventForm(): void {
     setEventForm({
       title: '',
       date: todayKey,
@@ -336,10 +368,103 @@ function App(): React.JSX.Element {
       notes: '',
       important: false,
     });
+    setEditingEventId(null);
+    setEventError('');
+  }
+
+  function validateEventForm(title: string, allowPast = false): string {
+    if (!title) {
+      return 'Add an event title.';
+    }
+
+    if (!eventForm.date) {
+      return 'Choose a date.';
+    }
+
+    if (!allowPast && eventForm.date < todayKey) {
+      return 'Events cannot be scheduled in the past.';
+    }
+
+    if (eventForm.endTime && !eventForm.startTime) {
+      return 'Add a start time before setting an end time.';
+    }
+
+    if (eventForm.startTime) {
+      const start = new Date(`${eventForm.date}T${eventForm.startTime}:00`);
+
+      if (!allowPast && eventForm.date === todayKey && start.getTime() < now.getTime()) {
+        return 'Start time cannot be earlier than the current system time.';
+      }
+
+      if (eventForm.endTime) {
+        const end = new Date(`${eventForm.date}T${eventForm.endTime}:00`);
+
+        if (end.getTime() <= start.getTime()) {
+          return 'End time must be later than start time.';
+        }
+      }
+    }
+
+    return '';
+  }
+
+  function saveEvent(event: React.FormEvent): void {
+    event.preventDefault();
+    const title = eventForm.title.trim();
+    const validationError = validateEventForm(title, Boolean(editingEventId));
+
+    if (validationError) {
+      setEventError(validationError);
+      return;
+    }
+
+    const existingEvent = data.events.find((item) => item.id === editingEventId);
+    const nextEvent: EventItem = {
+      id: existingEvent?.id ?? createId('event'),
+      title,
+      date: eventForm.date,
+      startTime: eventForm.startTime,
+      endTime: eventForm.endTime,
+      location: eventForm.location.trim(),
+      notes: eventForm.notes.trim(),
+      important: eventForm.important,
+      createdAt: existingEvent?.createdAt ?? new Date().toISOString(),
+    };
+
+    commitData({
+      ...data,
+      events: existingEvent ? data.events.map((item) => (item.id === existingEvent.id ? nextEvent : item)) : [...data.events, nextEvent],
+    });
+    resetEventForm();
+    setEventFormOpen(false);
+  }
+
+  function editEvent(event: EventItem): void {
+    setEventForm({
+      title: event.title,
+      date: event.date,
+      startTime: event.startTime,
+      endTime: event.endTime,
+      location: event.location,
+      notes: event.notes,
+      important: Boolean(event.important),
+    });
+    setEditingEventId(event.id);
+    setEventError('');
+    setEventFormOpen(true);
+    setCalendarOpen(false);
+  }
+
+  function cancelEventEdit(): void {
+    resetEventForm();
     setEventFormOpen(false);
   }
 
   function deleteEvent(eventId: string): void {
+    if (editingEventId === eventId) {
+      resetEventForm();
+    }
+
     commitData({
       ...data,
       events: data.events.filter((event) => event.id !== eventId),
@@ -370,11 +495,76 @@ function App(): React.JSX.Element {
     setNoteContent('');
   }
 
+  function editNote(note: QuickNote): void {
+    setEditingNoteId(note.id);
+    setNoteEditContent(note.content);
+  }
+
+  function cancelNoteEdit(): void {
+    setEditingNoteId(null);
+    setNoteEditContent('');
+  }
+
+  function saveNoteEdit(noteId: string): void {
+    const content = noteEditContent.trim();
+
+    if (!content) {
+      return;
+    }
+
+    commitData({
+      ...data,
+      notes: data.notes.map((note) => (note.id === noteId ? { ...note, content } : note)),
+    });
+    cancelNoteEdit();
+  }
+
   function deleteNote(noteId: string): void {
+    if (editingNoteId === noteId) {
+      cancelNoteEdit();
+    }
+
     commitData({
       ...data,
       notes: data.notes.filter((note) => note.id !== noteId),
     });
+  }
+
+  function renderNote(note: QuickNote, compact = false): React.JSX.Element {
+    const isEditing = editingNoteId === note.id;
+
+    if (isEditing) {
+      return (
+        <div className={compact ? 'detail-edit' : 'note-edit-form'}>
+          <textarea value={noteEditContent} onChange={(event) => setNoteEditContent(event.target.value)} rows={compact ? 2 : 3} autoFocus />
+          <div className="edit-actions">
+            <button className="small-button accent" type="button" onClick={() => saveNoteEdit(note.id)}>
+              Save
+            </button>
+            <button className="small-button" type="button" onClick={cancelNoteEdit}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <>
+        <div>
+          <time>{note.time}</time>
+          <p>{note.content}</p>
+        </div>
+        <div className="item-actions">
+          <button className="ghost-button" type="button" aria-label="Edit note" title="Edit" onClick={() => editNote(note)}>
+            <Pencil size={15} />
+          </button>
+          <button className="ghost-button" type="button" aria-label="Delete note" title="Delete" onClick={() => deleteNote(note.id)}>
+            <Trash2 size={15} />
+          </button>
+        </div>
+      </>
+    );
   }
 
   if (isLoading) {
@@ -398,8 +588,8 @@ function App(): React.JSX.Element {
 
   if (widgetMode === 'collapsed') {
     return (
-      <main className="app-shell compact-shell">
-        <section className="compact-widget">
+      <main className="app-shell compact-shell" style={shellStyle}>
+        <section className={`compact-widget ${reminderEvent ? 'reminder-active' : ''}`}>
           <div className="compact-drag drag-region" title="Drag DotDay">
             <GripVertical size={15} />
           </div>
@@ -421,7 +611,13 @@ function App(): React.JSX.Element {
           </div>
 
           <div className="compact-events">
-            {collapsedEvents.length === 0 ? (
+            {reminderEvent ? (
+              <div className="compact-event reminder-event">
+                <Clock size={13} />
+                <span>{reminderMinutes === 0 ? 'Now' : `${reminderMinutes} min`}</span>
+                <strong>{reminderEvent.title}</strong>
+              </div>
+            ) : collapsedEvents.length === 0 ? (
               <p>No upcoming events today</p>
             ) : (
               collapsedEvents.map((event) => (
@@ -435,7 +631,7 @@ function App(): React.JSX.Element {
           </div>
 
           <div className="compact-hint">
-            <button className="compact-expand no-drag" type="button" onClick={() => setMode('expanded')} aria-label="Expand DotDay">
+            <button className="compact-expand no-drag" type="button" onClick={openFromCompact} aria-label="Expand DotDay">
               <Maximize2 size={14} />
               Open
             </button>
@@ -446,13 +642,16 @@ function App(): React.JSX.Element {
   }
 
   return (
-    <main className="app-shell">
+    <main className="app-shell" style={shellStyle}>
       <header className="app-header drag-region">
         <div>
           <p className="eyebrow">{formatDisplayDate(todayKey)}</p>
           <h1>DotDay</h1>
         </div>
         <div className="window-actions">
+          <button className="icon-button no-drag" type="button" aria-label="Open settings" title="Settings" onClick={() => setSettingsOpen(true)}>
+            <Settings size={19} />
+          </button>
           <button className="icon-button no-drag" type="button" aria-label="Open calendar" title="Calendar" onClick={() => setCalendarOpen(true)}>
             <CalendarDays size={20} />
           </button>
@@ -519,14 +718,14 @@ function App(): React.JSX.Element {
           {todayEvents.length === 0 ? (
             <p className="empty">No events today.</p>
           ) : (
-            todayEvents.map((event) => <EventCard event={event} key={event.id} now={now} onDelete={() => deleteEvent(event.id)} />)
+            todayEvents.map((event) => <EventCard event={event} key={event.id} now={now} onDelete={() => deleteEvent(event.id)} onEdit={() => editEvent(event)} />)
           )}
         </div>
 
         {eventFormOpen ? (
-          <form className="event-form bottom-form" onSubmit={addEvent}>
+          <form className="event-form bottom-form" onSubmit={saveEvent}>
             <input className="wide" value={eventForm.title} onChange={(event) => setEventForm({ ...eventForm, title: event.target.value })} placeholder="Event title" />
-            <input type="date" value={eventForm.date} onChange={(event) => setEventForm({ ...eventForm, date: event.target.value })} />
+            <input type="date" min={editingEventId ? undefined : todayKey} value={eventForm.date} onChange={(event) => setEventForm({ ...eventForm, date: event.target.value })} />
             <input type="time" value={eventForm.startTime} onChange={(event) => setEventForm({ ...eventForm, startTime: event.target.value })} />
             <input type="time" value={eventForm.endTime} onChange={(event) => setEventForm({ ...eventForm, endTime: event.target.value })} />
             <input className="wide" value={eventForm.location} onChange={(event) => setEventForm({ ...eventForm, location: event.target.value })} placeholder="Location" />
@@ -535,10 +734,16 @@ function App(): React.JSX.Element {
               <input type="checkbox" checked={eventForm.important} onChange={(event) => setEventForm({ ...eventForm, important: event.target.checked })} />
               <span>Mark as important</span>
             </label>
+            {eventError ? <p className="form-error wide">{eventError}</p> : null}
             <button className="primary-button wide" type="submit">
-              <Plus size={16} />
-              Add event
+              {editingEventId ? <Check size={16} /> : <Plus size={16} />}
+              {editingEventId ? 'Save event' : 'Add event'}
             </button>
+            {editingEventId ? (
+              <button className="secondary-button wide" type="button" onClick={cancelEventEdit}>
+                Cancel edit
+              </button>
+            ) : null}
           </form>
         ) : null}
       </section>
@@ -562,14 +767,8 @@ function App(): React.JSX.Element {
             <p className="empty">No notes today.</p>
           ) : (
             todayNotes.map((note) => (
-              <div className="note-card" key={note.id}>
-                <div>
-                  <time>{note.time}</time>
-                  <p>{note.content}</p>
-                </div>
-                <button className="ghost-button" type="button" aria-label="Delete note" title="Delete" onClick={() => deleteNote(note.id)}>
-                  <Trash2 size={15} />
-                </button>
+              <div className={`note-card ${editingNoteId === note.id ? 'editing' : ''}`} key={note.id}>
+                {renderNote(note)}
               </div>
             ))
           )}
@@ -586,15 +785,24 @@ function App(): React.JSX.Element {
           onClose={() => setCalendarOpen(false)}
           onDeleteEvent={deleteEvent}
           onDeleteNote={deleteNote}
+          onEditEvent={editEvent}
+          onEditNote={editNote}
+          editingNoteId={editingNoteId}
+          noteEditContent={noteEditContent}
+          onCancelNoteEdit={cancelNoteEdit}
           onMonthChange={setCalendarMonth}
+          onNoteEditContentChange={setNoteEditContent}
+          onSaveNoteEdit={saveNoteEdit}
           onSelectedDateChange={setSelectedDate}
         />
       ) : null}
+
+      {settingsOpen ? <SettingsDialog settings={data.settings} onClose={() => setSettingsOpen(false)} onUpdate={updateSettings} /> : null}
     </main>
   );
 }
 
-function EventCard({ event, now, onDelete }: { event: EventItem; now: Date; onDelete: () => void }): React.JSX.Element {
+function EventCard({ event, now, onDelete, onEdit }: { event: EventItem; now: Date; onDelete: () => void; onEdit: () => void }): React.JSX.Element {
   const timeLabel = event.startTime || event.endTime ? `${event.startTime || '--:--'} - ${event.endTime || '--:--'}` : 'All day';
   const expired = isEventExpired(event, now);
 
@@ -616,9 +824,14 @@ function EventCard({ event, now, onDelete }: { event: EventItem; now: Date; onDe
         ) : null}
         {event.notes ? <p className="event-notes">{event.notes}</p> : null}
       </div>
-      <button className="ghost-button" type="button" aria-label="Delete event" title="Delete" onClick={onDelete}>
-        <Trash2 size={15} />
-      </button>
+      <div className="item-actions">
+        <button className="ghost-button" type="button" aria-label="Edit event" title="Edit" onClick={onEdit}>
+          <Pencil size={15} />
+        </button>
+        <button className="ghost-button" type="button" aria-label="Delete event" title="Delete" onClick={onDelete}>
+          <Trash2 size={15} />
+        </button>
+      </div>
     </div>
   );
 }
@@ -632,7 +845,14 @@ function CalendarDialog({
   onClose,
   onDeleteEvent,
   onDeleteNote,
+  onEditEvent,
+  onEditNote,
+  editingNoteId,
+  noteEditContent,
+  onCancelNoteEdit,
   onMonthChange,
+  onNoteEditContentChange,
+  onSaveNoteEdit,
   onSelectedDateChange,
 }: {
   data: AkDailyData;
@@ -643,7 +863,14 @@ function CalendarDialog({
   onClose: () => void;
   onDeleteEvent: (eventId: string) => void;
   onDeleteNote: (noteId: string) => void;
+  onEditEvent: (event: EventItem) => void;
+  onEditNote: (note: QuickNote) => void;
+  editingNoteId: string | null;
+  noteEditContent: string;
+  onCancelNoteEdit: () => void;
   onMonthChange: (date: Date) => void;
+  onNoteEditContentChange: (content: string) => void;
+  onSaveNoteEdit: (noteId: string) => void;
   onSelectedDateChange: (date: DateKey) => void;
 }): React.JSX.Element {
   const monthDays = getMonthDays(monthDate);
@@ -717,11 +944,18 @@ function CalendarDialog({
               selectedEvents.map((event) => (
                 <div className="detail-line detail-line-action" key={event.id}>
                   <span>{event.startTime || 'All day'}</span>
-                  {event.important ? '★ ' : ''}
-                  {event.title}
-                  <button className="detail-delete" type="button" aria-label="Delete event" title="Delete event" onClick={() => onDeleteEvent(event.id)}>
-                    <Trash2 size={13} />
-                  </button>
+                  <p>
+                    {event.important ? '★ ' : ''}
+                    {event.title}
+                  </p>
+                  <div className="detail-actions">
+                    <button className="detail-button" type="button" aria-label="Edit event" title="Edit event" onClick={() => onEditEvent(event)}>
+                      <Pencil size={13} />
+                    </button>
+                    <button className="detail-button" type="button" aria-label="Delete event" title="Delete event" onClick={() => onDeleteEvent(event.id)}>
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
                 </div>
               ))
             )}
@@ -733,17 +967,110 @@ function CalendarDialog({
               <p className="empty small">No notes</p>
             ) : (
               selectedNotes.map((note) => (
-                <div className="detail-line detail-line-action" key={note.id}>
-                  <span>{note.time}</span>
-                  {note.content}
-                  <button className="detail-delete" type="button" aria-label="Delete note" title="Delete note" onClick={() => onDeleteNote(note.id)}>
-                    <Trash2 size={13} />
-                  </button>
+                <div className={`detail-line detail-line-action ${editingNoteId === note.id ? 'editing' : ''}`} key={note.id}>
+                  {editingNoteId === note.id ? (
+                    <div className="detail-edit">
+                      <textarea value={noteEditContent} onChange={(event) => onNoteEditContentChange(event.target.value)} rows={2} autoFocus />
+                      <div className="edit-actions">
+                        <button className="small-button accent" type="button" onClick={() => onSaveNoteEdit(note.id)}>
+                          Save
+                        </button>
+                        <button className="small-button" type="button" onClick={onCancelNoteEdit}>
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <span>{note.time}</span>
+                      <p>{note.content}</p>
+                      <div className="detail-actions">
+                        <button className="detail-button" type="button" aria-label="Edit note" title="Edit note" onClick={() => onEditNote(note)}>
+                          <Pencil size={13} />
+                        </button>
+                        <button className="detail-button" type="button" aria-label="Delete note" title="Delete note" onClick={() => onDeleteNote(note.id)}>
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </div>
               ))
             )}
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function SettingsDialog({
+  settings,
+  onClose,
+  onUpdate,
+}: {
+  settings: DotDaySettings;
+  onClose: () => void;
+  onUpdate: (settings: DotDaySettings) => void;
+}): React.JSX.Element {
+  function updateSetting<K extends keyof DotDaySettings>(key: K, value: DotDaySettings[K]): void {
+    onUpdate({
+      ...settings,
+      [key]: value,
+    });
+  }
+
+  return (
+    <div className="modal-backdrop no-drag" role="dialog" aria-modal="true" aria-label="Settings">
+      <div className="settings-modal">
+        <div className="settings-header">
+          <div>
+            <p className="eyebrow">DotDay</p>
+            <strong>Settings</strong>
+          </div>
+          <button className="icon-button close-button" type="button" aria-label="Close settings" title="Close" onClick={onClose}>
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="setting-row">
+          <div className="setting-copy">
+            <strong>Widget opacity</strong>
+            <span>{settings.widgetOpacity}%</span>
+          </div>
+          <input
+            aria-label="Widget opacity"
+            max={98}
+            min={60}
+            type="range"
+            value={settings.widgetOpacity}
+            onChange={(event) => updateSetting('widgetOpacity', Number(event.target.value))}
+          />
+        </div>
+
+        <div className="setting-row">
+          <div className="setting-copy">
+            <strong>Reminder lead time</strong>
+            <span>{settings.reminderLeadMinutes} min before event</span>
+          </div>
+          <input
+            aria-label="Reminder lead time"
+            max={30}
+            min={1}
+            step={1}
+            type="range"
+            value={settings.reminderLeadMinutes}
+            onChange={(event) => updateSetting('reminderLeadMinutes', Number(event.target.value))}
+          />
+        </div>
+
+        <label className="setting-toggle">
+          <span>
+            <strong>Auto-collapse on blur</strong>
+            <small>Collapse DotDay when another window is focused.</small>
+          </span>
+          <input checked={settings.autoCollapseOnBlur} type="checkbox" onChange={(event) => updateSetting('autoCollapseOnBlur', event.target.checked)} />
+        </label>
       </div>
     </div>
   );

@@ -5,6 +5,7 @@ const api: AkDailyApi = {
   getData: () => ipcRenderer.invoke('ak-daily:get-data'),
   saveData: (data: AkDailyData) => ipcRenderer.invoke('ak-daily:save-data', data),
   setWidgetMode: (mode: WidgetMode) => ipcRenderer.invoke('dotday:set-widget-mode', mode),
+  setAutoCollapseOnBlur: (enabled: boolean) => ipcRenderer.invoke('dotday:set-auto-collapse-on-blur', enabled),
   onWidgetModeChanged: (callback: (mode: WidgetMode) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, mode: WidgetMode): void => callback(mode);
 

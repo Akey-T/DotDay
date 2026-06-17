@@ -30,17 +30,25 @@ export interface QuickNote {
   time: string;
 }
 
+export interface DotDaySettings {
+  widgetOpacity: number;
+  reminderLeadMinutes: number;
+  autoCollapseOnBlur: boolean;
+}
+
 export interface AkDailyData {
   habits: Habit[];
   habitRecords: Record<DateKey, HabitDayRecord>;
   events: EventItem[];
   notes: QuickNote[];
+  settings: DotDaySettings;
 }
 
 export interface AkDailyApi {
   getData: () => Promise<AkDailyData>;
   saveData: (data: AkDailyData) => Promise<AkDailyData>;
   setWidgetMode: (mode: WidgetMode) => Promise<void>;
+  setAutoCollapseOnBlur: (enabled: boolean) => Promise<void>;
   onWidgetModeChanged: (callback: (mode: WidgetMode) => void) => () => void;
   closeWindow: () => Promise<void>;
 }
