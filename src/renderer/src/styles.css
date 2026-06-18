@@ -269,6 +269,44 @@ label {
   background: var(--accent);
 }
 
+.streak-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: fit-content;
+  max-width: 100%;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.streak-pill svg {
+  color: var(--accent);
+}
+
+.streak-pill.active {
+  color: var(--accent);
+}
+
+.habit-title-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.home-streak {
+  min-width: 0;
+  font-size: 11px;
+}
+
+.home-streak span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .compact-events {
   display: grid;
   gap: 4px;
@@ -784,9 +822,12 @@ textarea:focus {
 }
 
 .calendar-modal {
+  position: relative;
+  display: flex;
+  flex-direction: column;
   width: min(100%, 390px);
   max-height: calc(100vh - 68px);
-  overflow: auto;
+  overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 14px;
   padding: 14px;
@@ -968,10 +1009,54 @@ input[type="range"] {
   background: #ffffff;
 }
 
-.day-detail {
+.calendar-detail-region {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 4px;
+  flex: 1 1 auto;
+  min-height: 150px;
   margin-top: 14px;
+  overflow: auto;
   border-top: 1px solid var(--border);
   padding-top: 12px;
+}
+
+.insights-rail-button {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  min-height: 128px;
+  align-self: stretch;
+  border: 1px solid rgba(249, 115, 22, 0.26);
+  border-left: 0;
+  border-radius: 0 999px 999px 0;
+  margin-left: -14px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.insights-rail-button:hover {
+  border-color: rgba(249, 115, 22, 0.58);
+  background: #ffffff;
+}
+
+.insights-rail-button span {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.day-detail {
+  margin-top: 14px;
+  min-width: 0;
+}
+
+.calendar-detail-region .day-detail {
+  margin-top: 0;
 }
 
 .detail-head {
@@ -1069,4 +1154,128 @@ input[type="range"] {
 .detail-button:last-child:hover {
   color: var(--danger);
   background: #fff0ed;
+}
+
+.insights-drawer {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  padding: 14px;
+  background: #ffffff;
+  transform: translateX(104%);
+  transition: transform 0.2s ease;
+  pointer-events: none;
+}
+
+.insights-drawer.open {
+  transform: translateX(0);
+  pointer-events: auto;
+}
+
+.insights-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+}
+
+.insights-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.insights-header h2 {
+  margin-top: 3px;
+}
+
+.insight-metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.insight-metric-card,
+.insight-chart-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(251, 246, 240, 0.78);
+}
+
+.insight-metric-card {
+  display: grid;
+  gap: 7px;
+  min-height: 76px;
+  padding: 10px;
+}
+
+.insight-metric-card span {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+.insight-metric-card strong {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  color: var(--accent);
+  font-size: 22px;
+  line-height: 1;
+}
+
+.insight-metric-card small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.insight-chart-card {
+  padding: 10px;
+}
+
+.insight-chart-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.insight-chart-head strong {
+  font-size: 13px;
+}
+
+.insight-chart-head span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.insight-chart {
+  width: 100%;
+  height: 164px;
+}
+
+.chart-tooltip {
+  display: grid;
+  gap: 4px;
+  max-width: 190px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 9px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 10px 24px rgba(62, 45, 31, 0.12);
+  font-size: 12px;
+}
+
+.chart-tooltip strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.chart-tooltip span {
+  color: var(--muted);
 }

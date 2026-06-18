@@ -6,6 +6,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock,
+  Flag,
   GripVertical,
   MapPin,
   Maximize2,
@@ -18,6 +19,8 @@ import {
   X,
 } from 'lucide-react';
 import type { AkDailyData, DateKey, DotDaySettings, EventItem, Habit, QuickNote, WidgetMode } from '../../shared/types';
+import { InsightsPanel } from './components/InsightsPanel';
+import { getStreakStatus } from './utils/analytics';
 import './styles.css';
 
 const defaultSettings: DotDaySettings = {
@@ -287,6 +290,7 @@ function App(): React.JSX.Element {
   const reminderEvent = todayEvents.find((event) => shouldRemindForEvent(event, now, acknowledgedReminderIds, data.settings.reminderLeadMinutes));
   const reminderMinutes = reminderEvent ? Math.max(0, Math.ceil((getEventStart(reminderEvent).getTime() - now.getTime()) / 60_000)) : null;
   const todayNotes = data.notes.filter((note) => note.date === todayKey).sort((first, second) => second.createdAt.localeCompare(first.createdAt));
+  const streakStatus = React.useMemo(() => getStreakStatus(data, now), [data, now]);
   const shellStyle = { '--widget-opacity': String(data.settings.widgetOpacity / 100) } as React.CSSProperties;
 
   function setMode(mode: WidgetMode): void {
@@ -664,7 +668,13 @@ function App(): React.JSX.Element {
       <section className="card">
         <div className="section-title">
           <div>
-            <h2>Today Habits</h2>
+            <div className="habit-title-line">
+              <h2>Today Habits</h2>
+              <div className={`streak-pill home-streak ${streakStatus.isActiveToday ? 'active' : ''}`}>
+                <Flag size={13} fill="currentColor" />
+                <span>{streakStatus.label}</span>
+              </div>
+            </div>
             <p>
               {todaySummary.completed}/{todaySummary.total} done · {todaySummary.percent}%
             </p>
@@ -873,6 +883,7 @@ function CalendarDialog({
   onSaveNoteEdit: (noteId: string) => void;
   onSelectedDateChange: (date: DateKey) => void;
 }): React.JSX.Element {
+  const [insightsOpen, setInsightsOpen] = React.useState(false);
   const monthDays = getMonthDays(monthDate);
   const selectedSummary = getHabitSummary(data, selectedDate);
   const selectedEvents = sortEvents(data.events.filter((event) => event.date === selectedDate), now);
@@ -928,76 +939,86 @@ function CalendarDialog({
           })}
         </div>
 
-        <div className="day-detail">
-          <div className="detail-head">
-            <strong>{formatDisplayDate(selectedDate)}</strong>
-            <span>
-              {selectedSummary.completed}/{selectedSummary.total} habits
-            </span>
-          </div>
+        <div className="calendar-detail-region">
+          <button className="insights-rail-button" type="button" onClick={() => setInsightsOpen(true)} aria-label="Open insights">
+            <span>Insights</span>
+          </button>
 
-          <div className="detail-block">
-            <p className="detail-label">Events</p>
-            {selectedEvents.length === 0 ? (
-              <p className="empty small">No events</p>
-            ) : (
-              selectedEvents.map((event) => (
-                <div className="detail-line detail-line-action" key={event.id}>
-                  <span>{event.startTime || 'All day'}</span>
-                  <p>
-                    {event.important ? '★ ' : ''}
-                    {event.title}
-                  </p>
-                  <div className="detail-actions">
-                    <button className="detail-button" type="button" aria-label="Edit event" title="Edit event" onClick={() => onEditEvent(event)}>
-                      <Pencil size={13} />
-                    </button>
-                    <button className="detail-button" type="button" aria-label="Delete event" title="Delete event" onClick={() => onDeleteEvent(event.id)}>
-                      <Trash2 size={13} />
-                    </button>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
+          <div className="day-detail">
+            <div className="detail-head">
+              <strong>{formatDisplayDate(selectedDate)}</strong>
+              <span>
+                {selectedSummary.completed}/{selectedSummary.total} habits
+              </span>
+            </div>
 
-          <div className="detail-block">
-            <p className="detail-label">Notes</p>
-            {selectedNotes.length === 0 ? (
-              <p className="empty small">No notes</p>
-            ) : (
-              selectedNotes.map((note) => (
-                <div className={`detail-line detail-line-action ${editingNoteId === note.id ? 'editing' : ''}`} key={note.id}>
-                  {editingNoteId === note.id ? (
-                    <div className="detail-edit">
-                      <textarea value={noteEditContent} onChange={(event) => onNoteEditContentChange(event.target.value)} rows={2} autoFocus />
-                      <div className="edit-actions">
-                        <button className="small-button accent" type="button" onClick={() => onSaveNoteEdit(note.id)}>
-                          Save
-                        </button>
-                        <button className="small-button" type="button" onClick={onCancelNoteEdit}>
-                          Cancel
-                        </button>
-                      </div>
+            <div className="detail-block">
+              <p className="detail-label">Events</p>
+              {selectedEvents.length === 0 ? (
+                <p className="empty small">No events</p>
+              ) : (
+                selectedEvents.map((event) => (
+                  <div className="detail-line detail-line-action" key={event.id}>
+                    <span>{event.startTime || 'All day'}</span>
+                    <p>
+                      {event.important ? '★ ' : ''}
+                      {event.title}
+                    </p>
+                    <div className="detail-actions">
+                      <button className="detail-button" type="button" aria-label="Edit event" title="Edit event" onClick={() => onEditEvent(event)}>
+                        <Pencil size={13} />
+                      </button>
+                      <button className="detail-button" type="button" aria-label="Delete event" title="Delete event" onClick={() => onDeleteEvent(event.id)}>
+                        <Trash2 size={13} />
+                      </button>
                     </div>
-                  ) : (
-                    <>
-                      <span>{note.time}</span>
-                      <p>{note.content}</p>
-                      <div className="detail-actions">
-                        <button className="detail-button" type="button" aria-label="Edit note" title="Edit note" onClick={() => onEditNote(note)}>
-                          <Pencil size={13} />
-                        </button>
-                        <button className="detail-button" type="button" aria-label="Delete note" title="Delete note" onClick={() => onDeleteNote(note.id)}>
-                          <Trash2 size={13} />
-                        </button>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="detail-block">
+              <p className="detail-label">Notes</p>
+              {selectedNotes.length === 0 ? (
+                <p className="empty small">No notes</p>
+              ) : (
+                selectedNotes.map((note) => (
+                  <div className={`detail-line detail-line-action ${editingNoteId === note.id ? 'editing' : ''}`} key={note.id}>
+                    {editingNoteId === note.id ? (
+                      <div className="detail-edit">
+                        <textarea value={noteEditContent} onChange={(event) => onNoteEditContentChange(event.target.value)} rows={2} autoFocus />
+                        <div className="edit-actions">
+                          <button className="small-button accent" type="button" onClick={() => onSaveNoteEdit(note.id)}>
+                            Save
+                          </button>
+                          <button className="small-button" type="button" onClick={onCancelNoteEdit}>
+                            Cancel
+                          </button>
+                        </div>
                       </div>
-                    </>
-                  )}
-                </div>
-              ))
-            )}
+                    ) : (
+                      <>
+                        <span>{note.time}</span>
+                        <p>{note.content}</p>
+                        <div className="detail-actions">
+                          <button className="detail-button" type="button" aria-label="Edit note" title="Edit note" onClick={() => onEditNote(note)}>
+                            <Pencil size={13} />
+                          </button>
+                          <button className="detail-button" type="button" aria-label="Delete note" title="Delete note" onClick={() => onDeleteNote(note.id)}>
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
           </div>
+        </div>
+
+        <div className={`insights-drawer ${insightsOpen ? 'open' : ''}`} aria-hidden={!insightsOpen}>
+          <InsightsPanel data={data} monthDate={monthDate} today={now} onClose={() => setInsightsOpen(false)} />
         </div>
       </div>
     </div>
