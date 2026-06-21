@@ -6,3 +6,5 @@ release
 *.tsbuildinfo
 *.log
 .DS_Store
+dotday-data.json
+ak-daily-data.json

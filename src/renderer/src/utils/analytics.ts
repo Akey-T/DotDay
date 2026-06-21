@@ -27,6 +27,22 @@ export interface StreakStatus {
   label: string;
 }
 
+export interface HabitHistoryDay {
+  date: DateKey;
+  index: number;
+  label: string;
+  completed: boolean;
+  percent: number;
+}
+
+export interface HabitHistoryInsights {
+  habit: Habit | null;
+  completionRate: number | null;
+  completedDays: number;
+  effectiveDays: number;
+  days: HabitHistoryDay[];
+}
+
 function toDateKey(date: Date): DateKey {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -183,5 +199,53 @@ export function getHabitInsights(data: AkDailyData, today: Date, monthDate: Date
     perfectDaysThisMonth: countPerfectDays(monthDays),
     weekDays,
     monthDays,
+  };
+}
+
+export function getHabitHistoryInsights(data: AkDailyData, habitId: string | null, today: Date): HabitHistoryInsights {
+  const habit = data.habits.find((item) => item.id === habitId) ?? data.habits[0] ?? null;
+
+  if (!habit) {
+    return {
+      habit: null,
+      completionRate: null,
+      completedDays: 0,
+      effectiveDays: 0,
+      days: [],
+    };
+  }
+
+  const todayKey = toDateKey(today);
+  const startDate = parseDateKey(toDateKey(new Date(habit.createdAt)));
+  const days: HabitHistoryDay[] = [];
+
+  for (let cursor = startDate, index = 1; toDateKey(cursor) <= todayKey && index <= 730; cursor = addDays(cursor, 1)) {
+    const dateKey = toDateKey(cursor);
+
+    if (!isHabitActiveOnDate(habit, dateKey)) {
+      continue;
+    }
+
+    const completed = Boolean(data.habitRecords[dateKey]?.[habit.id]);
+
+    days.push({
+      date: dateKey,
+      index,
+      label: `${cursor.getMonth() + 1}/${cursor.getDate()}`,
+      completed,
+      percent: completed ? 100 : 0,
+    });
+    index += 1;
+  }
+
+  const completedDays = days.filter((day) => day.completed).length;
+  const effectiveDays = days.length;
+
+  return {
+    habit,
+    completionRate: effectiveDays === 0 ? null : Math.round((completedDays / effectiveDays) * 100),
+    completedDays,
+    effectiveDays,
+    days,
   };
 }

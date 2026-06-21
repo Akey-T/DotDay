@@ -3,7 +3,7 @@ import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { AkDailyData, DotDaySettings, WidgetMode } from '../shared/types';
+import type { AkDailyData, DotDaySettings, WidgetMode, WindowPosition } from '../shared/types';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -11,6 +11,8 @@ const defaultSettings: DotDaySettings = {
   widgetOpacity: 88,
   reminderLeadMinutes: 5,
   autoCollapseOnBlur: true,
+  launchAtStartup: false,
+  windowPosition: null,
 };
 
 const defaultData: AkDailyData = {
@@ -24,7 +26,10 @@ const defaultData: AkDailyData = {
 let mainWindow: BrowserWindow | null = null;
 let widgetMode: WidgetMode = 'collapsed';
 let autoCollapseOnBlur = defaultSettings.autoCollapseOnBlur;
-let lastCollapsedPosition: { x: number; y: number } | null = null;
+let lastCollapsedPosition: WindowPosition | null = null;
+let positionSaveTimer: ReturnType<typeof setTimeout> | null = null;
+let allowWindowClose = false;
+let dataOperationQueue: Promise<unknown> = Promise.resolve();
 
 const collapsedSize = {
   width: 286,
@@ -32,7 +37,7 @@ const collapsedSize = {
 };
 
 const expandedSize = {
-  width: 420,
+  width: 404,
   height: 680,
 };
 
@@ -46,7 +51,7 @@ function getLegacyDataFilePath(): string {
   return join(app.getPath('appData'), 'AK Daily', 'ak-daily-data.json');
 }
 
-function clampWindowPosition(x: number, y: number, width: number, height: number): { x: number; y: number } {
+function clampWindowPosition(x: number, y: number, width: number, height: number): WindowPosition {
   const margin = 18;
   const display = screen.getDisplayNearestPoint({ x, y });
   const workArea = display.workArea;
@@ -57,7 +62,7 @@ function clampWindowPosition(x: number, y: number, width: number, height: number
   };
 }
 
-function placeWindow(mode: WidgetMode, useDefaultPosition = false, notifyRenderer = false): void {
+function placeWindow(mode: WidgetMode, useDefaultPosition = false, notifyRenderer = false, captureCurrentPosition = true): void {
   if (!mainWindow) {
     return;
   }
@@ -65,7 +70,7 @@ function placeWindow(mode: WidgetMode, useDefaultPosition = false, notifyRendere
   const previousMode = widgetMode;
   const currentBounds = mainWindow.getBounds();
 
-  if (previousMode === 'collapsed') {
+  if (previousMode === 'collapsed' && captureCurrentPosition) {
     lastCollapsedPosition = {
       x: currentBounds.x,
       y: currentBounds.y,
@@ -131,12 +136,25 @@ function normalizeData(value: unknown): AkDailyData {
           : defaultSettings.widgetOpacity,
       reminderLeadMinutes:
         typeof incomingSettings.reminderLeadMinutes === 'number'
-          ? Math.min(Math.max(Math.round(incomingSettings.reminderLeadMinutes), 1), 30)
+          ? Math.min(Math.max(Math.round(incomingSettings.reminderLeadMinutes), 1), 180)
           : defaultSettings.reminderLeadMinutes,
       autoCollapseOnBlur:
         typeof incomingSettings.autoCollapseOnBlur === 'boolean'
           ? incomingSettings.autoCollapseOnBlur
           : defaultSettings.autoCollapseOnBlur,
+      launchAtStartup:
+        typeof incomingSettings.launchAtStartup === 'boolean' ? incomingSettings.launchAtStartup : defaultSettings.launchAtStartup,
+      windowPosition:
+        incomingSettings.windowPosition &&
+        typeof incomingSettings.windowPosition.x === 'number' &&
+        Number.isFinite(incomingSettings.windowPosition.x) &&
+        typeof incomingSettings.windowPosition.y === 'number' &&
+        Number.isFinite(incomingSettings.windowPosition.y)
+          ? {
+              x: Math.round(incomingSettings.windowPosition.x),
+              y: Math.round(incomingSettings.windowPosition.y),
+            }
+          : defaultSettings.windowPosition,
     },
   };
 }
@@ -176,7 +194,57 @@ async function writeData(data: AkDailyData): Promise<AkDailyData> {
   return normalized;
 }
 
+function queueDataOperation<T>(operation: () => Promise<T>): Promise<T> {
+  const queued = dataOperationQueue.then(operation, operation);
+  dataOperationQueue = queued.then(
+    () => undefined,
+    () => undefined,
+  );
+  return queued;
+}
+
+function applyLaunchAtStartup(enabled: boolean): void {
+  if (!app.isPackaged) {
+    return;
+  }
+
+  app.setLoginItemSettings({
+    openAtLogin: enabled,
+  });
+}
+
+async function persistWindowPosition(): Promise<void> {
+  if (!lastCollapsedPosition) {
+    return;
+  }
+
+  const position = { ...lastCollapsedPosition };
+
+  await queueDataOperation(async () => {
+    const data = await readData();
+    await writeData({
+      ...data,
+      settings: {
+        ...data.settings,
+        windowPosition: position,
+      },
+    });
+  });
+}
+
+function scheduleWindowPositionSave(): void {
+  if (positionSaveTimer) {
+    clearTimeout(positionSaveTimer);
+  }
+
+  positionSaveTimer = setTimeout(() => {
+    positionSaveTimer = null;
+    void persistWindowPosition();
+  }, 350);
+}
+
 function createWindow(): void {
+  allowWindowClose = false;
   mainWindow = new BrowserWindow({
     width: collapsedSize.width,
     height: collapsedSize.height,
@@ -199,7 +267,7 @@ function createWindow(): void {
   });
 
   mainWindow.once('ready-to-show', () => {
-    placeWindow('collapsed', true);
+    placeWindow('collapsed', !lastCollapsedPosition, false, false);
     mainWindow?.show();
   });
 
@@ -218,8 +286,29 @@ function createWindow(): void {
           x: bounds.x,
           y: bounds.y,
         };
+        scheduleWindowPositionSave();
       }
     }
+  });
+
+  mainWindow.on('close', (event) => {
+    if (allowWindowClose) {
+      return;
+    }
+
+    event.preventDefault();
+    allowWindowClose = true;
+
+    if (positionSaveTimer) {
+      clearTimeout(positionSaveTimer);
+      positionSaveTimer = null;
+    }
+
+    void persistWindowPosition().finally(() => mainWindow?.close());
+  });
+
+  mainWindow.on('closed', () => {
+    mainWindow = null;
   });
 
   const rendererUrl = process.env.ELECTRON_RENDERER_URL;
@@ -232,7 +321,18 @@ function createWindow(): void {
 }
 
 ipcMain.handle('ak-daily:get-data', () => readData());
-ipcMain.handle('ak-daily:save-data', (_event, data: AkDailyData) => writeData(data));
+ipcMain.handle('ak-daily:save-data', (_event, data: AkDailyData) =>
+  queueDataOperation(async () => {
+    const settings = {
+      ...data.settings,
+      windowPosition: lastCollapsedPosition ?? data.settings.windowPosition,
+    };
+    const saved = await writeData({ ...data, settings });
+    autoCollapseOnBlur = saved.settings.autoCollapseOnBlur;
+    applyLaunchAtStartup(saved.settings.launchAtStartup);
+    return saved;
+  }),
+);
 ipcMain.handle('dotday:set-widget-mode', (_event, mode: WidgetMode) => {
   placeWindow(mode);
 });
@@ -243,7 +343,11 @@ ipcMain.handle('dotday:close-window', () => {
   mainWindow?.close();
 });
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  const data = await readData();
+  autoCollapseOnBlur = data.settings.autoCollapseOnBlur;
+  lastCollapsedPosition = data.settings.windowPosition;
+  applyLaunchAtStartup(data.settings.launchAtStartup);
   createWindow();
 
   app.on('activate', () => {

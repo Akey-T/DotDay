@@ -27,6 +27,8 @@ const defaultSettings: DotDaySettings = {
   widgetOpacity: 88,
   reminderLeadMinutes: 5,
   autoCollapseOnBlur: true,
+  launchAtStartup: false,
+  windowPosition: null,
 };
 
 const initialData: AkDailyData = {
@@ -228,6 +230,7 @@ function App(): React.JSX.Element {
   const [noteContent, setNoteContent] = React.useState('');
   const [editingNoteId, setEditingNoteId] = React.useState<string | null>(null);
   const [noteEditContent, setNoteEditContent] = React.useState('');
+  const [draggedHabitId, setDraggedHabitId] = React.useState<string | null>(null);
   const [calendarOpen, setCalendarOpen] = React.useState(false);
   const [settingsOpen, setSettingsOpen] = React.useState(false);
   const [calendarMonth, setCalendarMonth] = React.useState(new Date());
@@ -352,6 +355,28 @@ function App(): React.JSX.Element {
     commitData({
       ...data,
       settings: nextSettings,
+    });
+  }
+
+  function reorderHabit(sourceHabitId: string, targetHabitId: string): void {
+    if (sourceHabitId === targetHabitId) {
+      return;
+    }
+
+    const nextHabits = [...data.habits];
+    const sourceIndex = nextHabits.findIndex((habit) => habit.id === sourceHabitId);
+    const targetIndex = nextHabits.findIndex((habit) => habit.id === targetHabitId);
+
+    if (sourceIndex === -1 || targetIndex === -1) {
+      return;
+    }
+
+    const [movedHabit] = nextHabits.splice(sourceIndex, 1);
+    nextHabits.splice(targetIndex, 0, movedHabit);
+
+    commitData({
+      ...data,
+      habits: nextHabits,
     });
   }
 
@@ -691,7 +716,33 @@ function App(): React.JSX.Element {
             todayHabits.map((habit) => {
               const checked = Boolean(data.habitRecords[todayKey]?.[habit.id]);
               return (
-                <div className="habit-row" key={habit.id}>
+                <div
+                  className={`habit-row ${draggedHabitId === habit.id ? 'dragging' : ''}`}
+                  key={habit.id}
+                  onDragOver={(event) => event.preventDefault()}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    if (draggedHabitId) {
+                      reorderHabit(draggedHabitId, habit.id);
+                    }
+                    setDraggedHabitId(null);
+                  }}
+                >
+                  <button
+                    className="drag-handle"
+                    type="button"
+                    draggable
+                    aria-label="Drag to reorder habit"
+                    title="Drag to reorder"
+                    onDragStart={(event) => {
+                      setDraggedHabitId(habit.id);
+                      event.dataTransfer.effectAllowed = 'move';
+                      event.dataTransfer.setData('text/plain', habit.id);
+                    }}
+                    onDragEnd={() => setDraggedHabitId(null)}
+                  >
+                    <GripVertical size={15} />
+                  </button>
                   <button className={`check-button ${checked ? 'checked' : ''}`} type="button" aria-label="Toggle habit" onClick={() => toggleHabit(habit.id)}>
                     {checked ? <Check size={16} /> : null}
                   </button>
@@ -1076,8 +1127,8 @@ function SettingsDialog({
           </div>
           <input
             aria-label="Reminder lead time"
-            max={30}
             min={1}
+            max={180}
             step={1}
             type="range"
             value={settings.reminderLeadMinutes}
@@ -1091,6 +1142,14 @@ function SettingsDialog({
             <small>Collapse DotDay when another window is focused.</small>
           </span>
           <input checked={settings.autoCollapseOnBlur} type="checkbox" onChange={(event) => updateSetting('autoCollapseOnBlur', event.target.checked)} />
+        </label>
+
+        <label className="setting-toggle">
+          <span>
+            <strong>Launch at startup</strong>
+            <small>Open DotDay automatically when you sign in.</small>
+          </span>
+          <input checked={settings.launchAtStartup} type="checkbox" onChange={(event) => updateSetting('launchAtStartup', event.target.checked)} />
         </label>
       </div>
     </div>

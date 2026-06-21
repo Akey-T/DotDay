@@ -1,6 +1,11 @@
 export type DateKey = string;
 export type WidgetMode = 'collapsed' | 'expanded';
 
+export interface WindowPosition {
+  x: number;
+  y: number;
+}
+
 export interface Habit {
   id: string;
   title: string;
@@ -34,6 +39,8 @@ export interface DotDaySettings {
   widgetOpacity: number;
   reminderLeadMinutes: number;
   autoCollapseOnBlur: boolean;
+  launchAtStartup: boolean;
+  windowPosition: WindowPosition | null;
 }
 
 export interface AkDailyData {
