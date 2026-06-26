@@ -3,7 +3,7 @@ import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { AkDailyData, DotDaySettings, WidgetMode, WindowPosition } from '../shared/types';
+import type { AkDailyData, DotDaySettings, EventItem, EventTimeType, PlanNote, WidgetMode, WindowPosition } from '../shared/types';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -20,6 +20,7 @@ const defaultData: AkDailyData = {
   habitRecords: {},
   events: [],
   notes: [],
+  planNotes: [],
   settings: defaultSettings,
 };
 
@@ -120,6 +121,16 @@ function placeWindow(mode: WidgetMode, useDefaultPosition = false, notifyRendere
 function normalizeData(value: unknown): AkDailyData {
   const incoming = value && typeof value === 'object' ? (value as Partial<AkDailyData>) : {};
   const incomingSettings = incoming.settings && typeof incoming.settings === 'object' ? (incoming.settings as Partial<DotDaySettings>) : {};
+  const events = Array.isArray(incoming.events)
+    ? incoming.events
+        .map((item) => normalizeEvent(item))
+        .filter((item): item is EventItem => Boolean(item))
+    : [];
+  const planNotes = Array.isArray(incoming.planNotes)
+    ? incoming.planNotes
+        .map((item) => normalizePlanNote(item))
+        .filter((item): item is PlanNote => Boolean(item))
+    : [];
 
   return {
     habits: Array.isArray(incoming.habits) ? incoming.habits : [],
@@ -127,8 +138,9 @@ function normalizeData(value: unknown): AkDailyData {
       incoming.habitRecords && typeof incoming.habitRecords === 'object' && !Array.isArray(incoming.habitRecords)
         ? incoming.habitRecords
         : {},
-    events: Array.isArray(incoming.events) ? incoming.events : [],
+    events,
     notes: Array.isArray(incoming.notes) ? incoming.notes : [],
+    planNotes,
     settings: {
       widgetOpacity:
         typeof incomingSettings.widgetOpacity === 'number'
@@ -156,6 +168,78 @@ function normalizeData(value: unknown): AkDailyData {
             }
           : defaultSettings.windowPosition,
     },
+  };
+}
+
+function normalizeEvent(value: unknown): EventItem | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const event = value as Partial<EventItem> & { date?: string };
+  if (typeof event.id !== 'string' || typeof event.title !== 'string') {
+    return null;
+  }
+
+  const legacyDate = typeof event.date === 'string' ? event.date : '';
+  const startDate = typeof event.startDate === 'string' && event.startDate ? event.startDate : legacyDate;
+  if (!startDate) {
+    return null;
+  }
+
+  const startTime = typeof event.startTime === 'string' ? event.startTime : '';
+  const endTime = typeof event.endTime === 'string' ? event.endTime : '';
+  const validTypes: EventTimeType[] = ['moment', 'duration', 'allDay'];
+  const timeType: EventTimeType = validTypes.includes(event.timeType as EventTimeType)
+    ? (event.timeType as EventTimeType)
+    : startTime && endTime
+      ? 'duration'
+      : startTime
+        ? 'moment'
+      : 'allDay';
+  let endDate = typeof event.endDate === 'string' && event.endDate ? event.endDate : startDate;
+
+  if (!event.endDate && timeType === 'duration' && startTime && endTime && endTime <= startTime) {
+    const nextDay = new Date(`${startDate}T12:00:00`);
+    nextDay.setDate(nextDay.getDate() + 1);
+    endDate = [
+      nextDay.getFullYear(),
+      String(nextDay.getMonth() + 1).padStart(2, '0'),
+      String(nextDay.getDate()).padStart(2, '0'),
+    ].join('-');
+  }
+
+  return {
+    id: event.id,
+    title: event.title,
+    timeType,
+    startDate,
+    startTime: timeType === 'allDay' ? '' : startTime,
+    endDate,
+    endTime: timeType === 'duration' ? endTime : '',
+    location: typeof event.location === 'string' ? event.location : '',
+    notes: typeof event.notes === 'string' ? event.notes : '',
+    important: Boolean(event.important),
+    createdAt: typeof event.createdAt === 'string' ? event.createdAt : new Date().toISOString(),
+  };
+}
+
+function normalizePlanNote(value: unknown): PlanNote | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const note = value as Partial<PlanNote>;
+  if (typeof note.id !== 'string' || typeof note.title !== 'string') {
+    return null;
+  }
+
+  return {
+    id: note.id,
+    title: note.title,
+    important: Boolean(note.important),
+    completedAt: typeof note.completedAt === 'string' ? note.completedAt : undefined,
+    createdAt: typeof note.createdAt === 'string' ? note.createdAt : new Date().toISOString(),
   };
 }
 
@@ -204,12 +288,21 @@ function queueDataOperation<T>(operation: () => Promise<T>): Promise<T> {
 }
 
 function applyLaunchAtStartup(enabled: boolean): void {
-  if (!app.isPackaged) {
+  if (!app.isPackaged && process.platform !== 'win32') {
+    return;
+  }
+
+  if (app.isPackaged) {
+    app.setLoginItemSettings({
+      openAtLogin: enabled,
+    });
     return;
   }
 
   app.setLoginItemSettings({
     openAtLogin: enabled,
+    path: process.execPath,
+    args: [app.getAppPath()],
   });
 }
 

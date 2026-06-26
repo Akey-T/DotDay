@@ -3,8 +3,10 @@ import ReactDOM from 'react-dom/client';
 import {
   CalendarDays,
   Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ClipboardList,
   Clock,
   Flag,
   GripVertical,
@@ -18,7 +20,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import type { AkDailyData, DateKey, DotDaySettings, EventItem, Habit, QuickNote, WidgetMode } from '../../shared/types';
+import type { AkDailyData, DateKey, DotDaySettings, EventItem, EventTimeType, Habit, PlanNote, QuickNote, WidgetMode } from '../../shared/types';
 import { InsightsPanel } from './components/InsightsPanel';
 import { getStreakStatus } from './utils/analytics';
 import './styles.css';
@@ -36,6 +38,7 @@ const initialData: AkDailyData = {
   habitRecords: {},
   events: [],
   notes: [],
+  planNotes: [],
   settings: defaultSettings,
 };
 
@@ -134,19 +137,59 @@ function getCalendarHabitMarker(data: AkDailyData, dateKey: DateKey, todayKey: D
 }
 
 function getEventStart(event: EventItem): Date {
-  return new Date(`${event.date}T${event.startTime || '00:00'}:00`);
+  return new Date(`${event.startDate}T${event.timeType === 'allDay' ? '00:00' : event.startTime || '00:00'}:00`);
 }
 
 function getEventEnd(event: EventItem): Date {
-  const start = getEventStart(event);
-  const endTime = event.endTime || '23:59';
-  const end = new Date(`${event.date}T${endTime}:00`);
-
-  if (event.startTime && event.endTime && end <= start) {
-    end.setDate(end.getDate() + 1);
+  if (event.timeType === 'moment') {
+    return new Date(getEventStart(event).getTime() + 60_000);
   }
 
-  return end;
+  if (event.timeType === 'allDay') {
+    return new Date(`${event.endDate || event.startDate}T23:59:59`);
+  }
+
+  return new Date(`${event.endDate || event.startDate}T${event.endTime || '23:59'}:00`);
+}
+
+function eventOccursOnDate(event: EventItem, dateKey: DateKey): boolean {
+  return event.startDate <= dateKey && (event.endDate || event.startDate) >= dateKey;
+}
+
+function formatShortDate(dateKey: DateKey): string {
+  return new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric' }).format(new Date(`${dateKey}T12:00:00`));
+}
+
+function getEventTimeLabel(event: EventItem, includeDates = false): string {
+  if (event.timeType === 'moment') {
+    return includeDates ? `${formatShortDate(event.startDate)} · ${event.startTime}` : event.startTime;
+  }
+
+  if (event.timeType === 'allDay') {
+    return event.endDate !== event.startDate && includeDates
+      ? `${formatShortDate(event.startDate)} – ${formatShortDate(event.endDate)}`
+      : 'All day';
+  }
+
+  if (event.startDate === event.endDate) {
+    return `${event.startTime} – ${event.endTime}`;
+  }
+
+  return includeDates
+    ? `${formatShortDate(event.startDate)} ${event.startTime} – ${formatShortDate(event.endDate)} ${event.endTime}`
+    : `${event.startTime} – ${formatShortDate(event.endDate)} ${event.endTime}`;
+}
+
+function getEventDayLabel(event: EventItem, dateKey: DateKey): string {
+  if (event.timeType === 'allDay') {
+    return 'All day';
+  }
+
+  if (event.timeType === 'duration' && dateKey > event.startDate) {
+    return 'Ongoing';
+  }
+
+  return event.startTime;
 }
 
 function isEventExpired(event: EventItem, now: Date): boolean {
@@ -154,7 +197,7 @@ function isEventExpired(event: EventItem, now: Date): boolean {
 }
 
 function shouldRemindForEvent(event: EventItem, now: Date, acknowledgedReminderIds: Set<string>, reminderLeadMinutes: number): boolean {
-  if (!event.startTime || acknowledgedReminderIds.has(event.id) || isEventExpired(event, now)) {
+  if (event.timeType === 'allDay' || !event.startTime || acknowledgedReminderIds.has(event.id) || isEventExpired(event, now)) {
     return false;
   }
 
@@ -216,21 +259,30 @@ function App(): React.JSX.Element {
   const [habitTitle, setHabitTitle] = React.useState('');
   const [eventForm, setEventForm] = React.useState({
     title: '',
-    date: todayKey,
+    timeType: 'moment' as EventTimeType,
+    startDate: todayKey,
     startTime: '',
+    endDate: todayKey,
     endTime: '',
     location: '',
     notes: '',
     important: false,
   });
   const [eventFormOpen, setEventFormOpen] = React.useState(false);
+  const [eventDetailsOpen, setEventDetailsOpen] = React.useState(false);
   const [eventError, setEventError] = React.useState('');
   const [editingEventId, setEditingEventId] = React.useState<string | null>(null);
   const [acknowledgedReminderIds, setAcknowledgedReminderIds] = React.useState<Set<string>>(() => new Set());
   const [noteContent, setNoteContent] = React.useState('');
+  const [noteFormOpen, setNoteFormOpen] = React.useState(false);
   const [editingNoteId, setEditingNoteId] = React.useState<string | null>(null);
   const [noteEditContent, setNoteEditContent] = React.useState('');
   const [draggedHabitId, setDraggedHabitId] = React.useState<string | null>(null);
+  const [planNotesOpen, setPlanNotesOpen] = React.useState(false);
+  const [planTitle, setPlanTitle] = React.useState('');
+  const [editingPlanId, setEditingPlanId] = React.useState<string | null>(null);
+  const [planEditTitle, setPlanEditTitle] = React.useState('');
+  const [draggedPlanId, setDraggedPlanId] = React.useState<string | null>(null);
   const [calendarOpen, setCalendarOpen] = React.useState(false);
   const [settingsOpen, setSettingsOpen] = React.useState(false);
   const [calendarMonth, setCalendarMonth] = React.useState(new Date());
@@ -287,18 +339,26 @@ function App(): React.JSX.Element {
 
   const todayHabits = getHabitsForDate(data, todayKey);
   const todaySummary = getHabitSummary(data, todayKey);
-  const todayEvents = sortEvents(data.events.filter((event) => event.date === todayKey), now);
+  const todayEvents = sortEvents(data.events.filter((event) => eventOccursOnDate(event, todayKey)), now);
   const nextEvent = todayEvents.find((event) => !isEventExpired(event, now)) ?? todayEvents[0];
   const collapsedEvents = nextEvent ? [nextEvent] : [];
   const reminderEvent = todayEvents.find((event) => shouldRemindForEvent(event, now, acknowledgedReminderIds, data.settings.reminderLeadMinutes));
   const reminderMinutes = reminderEvent ? Math.max(0, Math.ceil((getEventStart(reminderEvent).getTime() - now.getTime()) / 60_000)) : null;
   const todayNotes = data.notes.filter((note) => note.date === todayKey).sort((first, second) => second.createdAt.localeCompare(first.createdAt));
+  const sortedPlanNotes = [...data.planNotes].sort((first, second) => {
+    if (Boolean(first.completedAt) !== Boolean(second.completedAt)) {
+      return first.completedAt ? 1 : -1;
+    }
+    return data.planNotes.indexOf(first) - data.planNotes.indexOf(second);
+  });
+  const openPlanCount = data.planNotes.filter((plan) => !plan.completedAt).length;
   const streakStatus = React.useMemo(() => getStreakStatus(data, now), [data, now]);
   const shellStyle = { '--widget-opacity': String(data.settings.widgetOpacity / 100) } as React.CSSProperties;
 
   function setMode(mode: WidgetMode): void {
     setCalendarOpen(false);
     setSettingsOpen(false);
+    setPlanNotesOpen(false);
     setWidgetMode(mode);
   }
 
@@ -390,13 +450,16 @@ function App(): React.JSX.Element {
   function resetEventForm(): void {
     setEventForm({
       title: '',
-      date: todayKey,
+      timeType: 'moment',
+      startDate: todayKey,
       startTime: '',
+      endDate: todayKey,
       endTime: '',
       location: '',
       notes: '',
       important: false,
     });
+    setEventDetailsOpen(false);
     setEditingEventId(null);
     setEventError('');
   }
@@ -406,32 +469,37 @@ function App(): React.JSX.Element {
       return 'Add an event title.';
     }
 
-    if (!eventForm.date) {
-      return 'Choose a date.';
+    if (!eventForm.startDate) {
+      return 'Choose a start date.';
     }
 
-    if (!allowPast && eventForm.date < todayKey) {
+    if (!allowPast && eventForm.startDate < todayKey) {
       return 'Events cannot be scheduled in the past.';
     }
 
-    if (eventForm.endTime && !eventForm.startTime) {
-      return 'Add a start time before setting an end time.';
+    if (eventForm.timeType !== 'allDay' && !eventForm.startTime) {
+      return 'Choose a start time.';
     }
 
-    if (eventForm.startTime) {
-      const start = new Date(`${eventForm.date}T${eventForm.startTime}:00`);
+    const start = new Date(`${eventForm.startDate}T${eventForm.timeType === 'allDay' ? '00:00' : eventForm.startTime}:00`);
 
-      if (!allowPast && eventForm.date === todayKey && start.getTime() < now.getTime()) {
-        return 'Start time cannot be earlier than the current system time.';
+    if (!allowPast && eventForm.timeType !== 'allDay' && eventForm.startDate === todayKey && start.getTime() < now.getTime()) {
+      return 'Start time cannot be earlier than the current system time.';
+    }
+
+    if (eventForm.timeType === 'duration') {
+      if (!eventForm.endDate || !eventForm.endTime) {
+        return 'Choose an end date and time.';
       }
 
-      if (eventForm.endTime) {
-        const end = new Date(`${eventForm.date}T${eventForm.endTime}:00`);
-
-        if (end.getTime() <= start.getTime()) {
-          return 'End time must be later than start time.';
-        }
+      const end = new Date(`${eventForm.endDate}T${eventForm.endTime}:00`);
+      if (end.getTime() <= start.getTime()) {
+        return 'End must be later than start.';
       }
+    }
+
+    if (eventForm.timeType === 'allDay' && eventForm.endDate && eventForm.endDate < eventForm.startDate) {
+      return 'End date cannot be earlier than start date.';
     }
 
     return '';
@@ -451,9 +519,11 @@ function App(): React.JSX.Element {
     const nextEvent: EventItem = {
       id: existingEvent?.id ?? createId('event'),
       title,
-      date: eventForm.date,
-      startTime: eventForm.startTime,
-      endTime: eventForm.endTime,
+      timeType: eventForm.timeType,
+      startDate: eventForm.startDate,
+      startTime: eventForm.timeType === 'allDay' ? '' : eventForm.startTime,
+      endDate: eventForm.timeType === 'moment' ? eventForm.startDate : eventForm.endDate || eventForm.startDate,
+      endTime: eventForm.timeType === 'duration' ? eventForm.endTime : '',
       location: eventForm.location.trim(),
       notes: eventForm.notes.trim(),
       important: eventForm.important,
@@ -471,14 +541,17 @@ function App(): React.JSX.Element {
   function editEvent(event: EventItem): void {
     setEventForm({
       title: event.title,
-      date: event.date,
+      timeType: event.timeType,
+      startDate: event.startDate,
       startTime: event.startTime,
+      endDate: event.endDate,
       endTime: event.endTime,
       location: event.location,
       notes: event.notes,
       important: Boolean(event.important),
     });
     setEditingEventId(event.id);
+    setEventDetailsOpen(Boolean(event.location || event.notes || event.important));
     setEventError('');
     setEventFormOpen(true);
     setCalendarOpen(false);
@@ -522,6 +595,94 @@ function App(): React.JSX.Element {
       notes: [...data.notes, note],
     });
     setNoteContent('');
+    setNoteFormOpen(false);
+  }
+
+  function addPlanNote(event: React.FormEvent): void {
+    event.preventDefault();
+    const title = planTitle.trim();
+
+    if (!title) {
+      return;
+    }
+
+    commitData({
+      ...data,
+      planNotes: [
+        ...data.planNotes,
+        {
+          id: createId('plan'),
+          title,
+          important: false,
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    });
+    setPlanTitle('');
+  }
+
+  function togglePlanNote(planId: string): void {
+    const completedAt = data.planNotes.find((plan) => plan.id === planId)?.completedAt;
+    commitData({
+      ...data,
+      planNotes: data.planNotes.map((plan) =>
+        plan.id === planId ? { ...plan, completedAt: completedAt ? undefined : new Date().toISOString() } : plan,
+      ),
+    });
+  }
+
+  function togglePlanImportant(planId: string): void {
+    commitData({
+      ...data,
+      planNotes: data.planNotes.map((plan) => (plan.id === planId ? { ...plan, important: !plan.important } : plan)),
+    });
+  }
+
+  function editPlanNote(plan: PlanNote): void {
+    setEditingPlanId(plan.id);
+    setPlanEditTitle(plan.title);
+  }
+
+  function savePlanNote(planId: string): void {
+    const title = planEditTitle.trim();
+    if (!title) {
+      return;
+    }
+
+    commitData({
+      ...data,
+      planNotes: data.planNotes.map((plan) => (plan.id === planId ? { ...plan, title } : plan)),
+    });
+    setEditingPlanId(null);
+    setPlanEditTitle('');
+  }
+
+  function deletePlanNote(planId: string): void {
+    commitData({
+      ...data,
+      planNotes: data.planNotes.filter((plan) => plan.id !== planId),
+    });
+    if (editingPlanId === planId) {
+      setEditingPlanId(null);
+      setPlanEditTitle('');
+    }
+  }
+
+  function reorderPlanNote(sourceId: string, targetId: string): void {
+    if (sourceId === targetId) {
+      return;
+    }
+
+    const next = [...data.planNotes];
+    const sourceIndex = next.findIndex((plan) => plan.id === sourceId);
+    const targetIndex = next.findIndex((plan) => plan.id === targetId);
+    if (sourceIndex < 0 || targetIndex < 0) {
+      return;
+    }
+
+    const [moved] = next.splice(sourceIndex, 1);
+    next.splice(targetIndex, 0, moved);
+    commitData({ ...data, planNotes: next });
   }
 
   function editNote(note: QuickNote): void {
@@ -652,7 +813,7 @@ function App(): React.JSX.Element {
               collapsedEvents.map((event) => (
                 <div className={`compact-event ${isEventExpired(event, now) ? 'expired-event' : ''}`} key={event.id}>
                   {event.important ? <Star size={13} fill="currentColor" /> : <Clock size={13} />}
-                  <span>{event.startTime || 'All day'}</span>
+                  <span>{getEventDayLabel(event, todayKey)}</span>
                   <strong>{event.title}</strong>
                 </div>
               ))
@@ -770,7 +931,19 @@ function App(): React.JSX.Element {
             <h2>Today Events</h2>
             <span>{todayEvents.length} items</span>
           </div>
-          <button className={`icon-button ${eventFormOpen ? '' : 'accent'}`} type="button" aria-label="Toggle event form" title="Add event" onClick={() => setEventFormOpen((isOpen) => !isOpen)}>
+          <button
+            className={`icon-button ${eventFormOpen ? '' : 'accent'}`}
+            type="button"
+            aria-label="Toggle event form"
+            title="Add event"
+            onClick={() => {
+              if (eventFormOpen) {
+                cancelEventEdit();
+              } else {
+                setEventFormOpen(true);
+              }
+            }}
+          >
             {eventFormOpen ? <X size={18} /> : <Plus size={18} />}
           </button>
         </div>
@@ -786,15 +959,84 @@ function App(): React.JSX.Element {
         {eventFormOpen ? (
           <form className="event-form bottom-form" onSubmit={saveEvent}>
             <input className="wide" value={eventForm.title} onChange={(event) => setEventForm({ ...eventForm, title: event.target.value })} placeholder="Event title" />
-            <input type="date" min={editingEventId ? undefined : todayKey} value={eventForm.date} onChange={(event) => setEventForm({ ...eventForm, date: event.target.value })} />
-            <input type="time" value={eventForm.startTime} onChange={(event) => setEventForm({ ...eventForm, startTime: event.target.value })} />
-            <input type="time" value={eventForm.endTime} onChange={(event) => setEventForm({ ...eventForm, endTime: event.target.value })} />
-            <input className="wide" value={eventForm.location} onChange={(event) => setEventForm({ ...eventForm, location: event.target.value })} placeholder="Location" />
-            <textarea className="wide" value={eventForm.notes} onChange={(event) => setEventForm({ ...eventForm, notes: event.target.value })} placeholder="Notes" rows={2} />
-            <label className="check-label wide">
-              <input type="checkbox" checked={eventForm.important} onChange={(event) => setEventForm({ ...eventForm, important: event.target.checked })} />
-              <span>Mark as important</span>
+            <div className="event-type-control wide" role="group" aria-label="Event time type">
+              {[
+                ['moment', 'Moment'],
+                ['duration', 'Duration'],
+                ['allDay', 'All day'],
+              ].map(([value, label]) => (
+                <button
+                  className={eventForm.timeType === value ? 'active' : ''}
+                  key={value}
+                  type="button"
+                  onClick={() =>
+                    setEventForm((current) => ({
+                      ...current,
+                      timeType: value as EventTimeType,
+                      endDate: current.endDate || current.startDate,
+                      endTime: value === 'duration' ? current.endTime : '',
+                    }))
+                  }
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            <label className="event-field">
+              <span>{eventForm.timeType === 'duration' ? 'Starts' : 'Date'}</span>
+              <input
+                type="date"
+                min={editingEventId ? undefined : todayKey}
+                value={eventForm.startDate}
+                onChange={(event) =>
+                  setEventForm((current) => ({
+                    ...current,
+                    startDate: event.target.value,
+                    endDate: current.endDate < event.target.value ? event.target.value : current.endDate,
+                  }))
+                }
+              />
             </label>
+            {eventForm.timeType !== 'allDay' ? (
+              <label className="event-field">
+                <span>Time</span>
+                <input type="time" value={eventForm.startTime} onChange={(event) => setEventForm({ ...eventForm, startTime: event.target.value })} />
+              </label>
+            ) : (
+              <label className="event-field">
+                <span>Ends</span>
+                <input type="date" min={eventForm.startDate} value={eventForm.endDate} onChange={(event) => setEventForm({ ...eventForm, endDate: event.target.value })} />
+              </label>
+            )}
+
+            {eventForm.timeType === 'duration' ? (
+              <>
+                <label className="event-field">
+                  <span>Ends</span>
+                  <input type="date" min={eventForm.startDate} value={eventForm.endDate} onChange={(event) => setEventForm({ ...eventForm, endDate: event.target.value })} />
+                </label>
+                <label className="event-field">
+                  <span>Time</span>
+                  <input type="time" value={eventForm.endTime} onChange={(event) => setEventForm({ ...eventForm, endTime: event.target.value })} />
+                </label>
+              </>
+            ) : null}
+
+            <button className="event-details-toggle wide" type="button" onClick={() => setEventDetailsOpen((open) => !open)}>
+              <span>More details</span>
+              <ChevronDown size={15} className={eventDetailsOpen ? 'open' : ''} />
+            </button>
+            {eventDetailsOpen ? (
+              <>
+                <input className="wide" value={eventForm.location} onChange={(event) => setEventForm({ ...eventForm, location: event.target.value })} placeholder="Location" />
+                <textarea className="wide" value={eventForm.notes} onChange={(event) => setEventForm({ ...eventForm, notes: event.target.value })} placeholder="Notes" rows={2} />
+                <label className="check-label wide">
+                  <input type="checkbox" checked={eventForm.important} onChange={(event) => setEventForm({ ...eventForm, important: event.target.checked })} />
+                  <span>Mark as important</span>
+                </label>
+              </>
+            ) : null}
             {eventError ? <p className="form-error wide">{eventError}</p> : null}
             <button className="primary-button wide" type="submit">
               {editingEventId ? <Check size={16} /> : <Plus size={16} />}
@@ -810,18 +1052,15 @@ function App(): React.JSX.Element {
       </section>
 
       <section className="card">
-        <div className="section-title compact">
-          <h2>Quick Notes</h2>
-          <span>{todayNotes.length} notes</span>
-        </div>
-
-        <form className="note-form" onSubmit={addNote}>
-          <textarea value={noteContent} onChange={(event) => setNoteContent(event.target.value)} placeholder="Capture a quick note" rows={3} />
-          <button className="primary-button" type="submit">
-            <StickyNote size={16} />
-            Save note
+        <div className="section-title compact section-title-action">
+          <div>
+            <h2>Quick Notes</h2>
+            <span>{todayNotes.length} notes</span>
+          </div>
+          <button className={`icon-button ${noteFormOpen ? '' : 'accent'}`} type="button" aria-label="Toggle note form" title="Add note" onClick={() => setNoteFormOpen((open) => !open)}>
+            {noteFormOpen ? <X size={18} /> : <Plus size={18} />}
           </button>
-        </form>
+        </div>
 
         <div className="item-list">
           {todayNotes.length === 0 ? (
@@ -834,7 +1073,112 @@ function App(): React.JSX.Element {
             ))
           )}
         </div>
+
+        {noteFormOpen ? (
+          <form className="note-form bottom-form" onSubmit={addNote}>
+            <textarea value={noteContent} onChange={(event) => setNoteContent(event.target.value)} placeholder="Capture a quick note" rows={3} autoFocus />
+            <button className="primary-button" type="submit">
+              <StickyNote size={16} />
+              Save note
+            </button>
+          </form>
+        ) : null}
       </section>
+
+      <button className="plan-launcher" type="button" onClick={() => setPlanNotesOpen(true)}>
+        <span>
+          <ClipboardList size={17} />
+          <strong>Plan Notes</strong>
+        </span>
+        <small>{openPlanCount} open</small>
+        <ChevronDown size={17} className="plan-launcher-arrow" />
+      </button>
+
+      {planNotesOpen ? (
+        <div className="plan-backdrop no-drag" role="dialog" aria-modal="true" aria-label="Plan Notes" onMouseDown={() => setPlanNotesOpen(false)}>
+          <section className="plan-sheet" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="plan-sheet-handle" />
+            <div className="plan-sheet-header">
+              <div>
+                <p className="eyebrow">Anytime plans</p>
+                <h2>Plan Notes</h2>
+              </div>
+              <button className="icon-button close-button" type="button" aria-label="Close Plan Notes" title="Close" onClick={() => setPlanNotesOpen(false)}>
+                <X size={18} />
+              </button>
+            </div>
+
+            <form className="inline-form plan-add-form" onSubmit={addPlanNote}>
+              <input value={planTitle} onChange={(event) => setPlanTitle(event.target.value)} placeholder="What are you planning?" autoFocus />
+              <button className="icon-button accent" type="submit" aria-label="Add plan" title="Add plan">
+                <Plus size={18} />
+              </button>
+            </form>
+
+            <div className="plan-list">
+              {sortedPlanNotes.length === 0 ? (
+                <p className="empty">A clear page for whatever comes next.</p>
+              ) : (
+                sortedPlanNotes.map((plan) => (
+                  <div
+                    className={`plan-row ${plan.completedAt ? 'completed' : ''} ${draggedPlanId === plan.id ? 'dragging' : ''}`}
+                    key={plan.id}
+                    onDragOver={(event) => event.preventDefault()}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      if (draggedPlanId) {
+                        reorderPlanNote(draggedPlanId, plan.id);
+                      }
+                      setDraggedPlanId(null);
+                    }}
+                  >
+                    <button
+                      className="drag-handle"
+                      type="button"
+                      draggable
+                      aria-label="Drag to reorder plan"
+                      title="Drag to reorder"
+                      onDragStart={(event) => {
+                        setDraggedPlanId(plan.id);
+                        event.dataTransfer.effectAllowed = 'move';
+                      }}
+                      onDragEnd={() => setDraggedPlanId(null)}
+                    >
+                      <GripVertical size={15} />
+                    </button>
+                    <button className={`check-button ${plan.completedAt ? 'checked' : ''}`} type="button" aria-label="Toggle plan" onClick={() => togglePlanNote(plan.id)}>
+                      {plan.completedAt ? <Check size={16} /> : null}
+                    </button>
+                    {editingPlanId === plan.id ? (
+                      <div className="plan-edit">
+                        <input value={planEditTitle} onChange={(event) => setPlanEditTitle(event.target.value)} autoFocus />
+                        <div className="edit-actions">
+                          <button className="small-button accent" type="button" onClick={() => savePlanNote(plan.id)}>Save</button>
+                          <button className="small-button" type="button" onClick={() => {
+                            setEditingPlanId(null);
+                            setPlanEditTitle('');
+                          }}>Cancel</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <span className="plan-title">{plan.title}</span>
+                    )}
+                    <button className={`ghost-button plan-star ${plan.important ? 'active' : ''}`} type="button" aria-label="Toggle important" title="Important" onClick={() => togglePlanImportant(plan.id)}>
+                      <Star size={14} fill={plan.important ? 'currentColor' : 'none'} />
+                    </button>
+                    <button className="ghost-button" type="button" aria-label="Edit plan" title="Edit" onClick={() => editPlanNote(plan)}>
+                      <Pencil size={14} />
+                    </button>
+                    <button className="ghost-button" type="button" aria-label="Delete plan" title="Delete" onClick={() => deletePlanNote(plan.id)}>
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </section>
+        </div>
+      ) : null}
 
       {calendarOpen ? (
         <CalendarDialog
@@ -864,7 +1208,7 @@ function App(): React.JSX.Element {
 }
 
 function EventCard({ event, now, onDelete, onEdit }: { event: EventItem; now: Date; onDelete: () => void; onEdit: () => void }): React.JSX.Element {
-  const timeLabel = event.startTime || event.endTime ? `${event.startTime || '--:--'} - ${event.endTime || '--:--'}` : 'All day';
+  const timeLabel = getEventTimeLabel(event, event.startDate !== event.endDate);
   const expired = isEventExpired(event, now);
 
   return (
@@ -937,16 +1281,25 @@ function CalendarDialog({
   const [insightsOpen, setInsightsOpen] = React.useState(false);
   const monthDays = getMonthDays(monthDate);
   const selectedSummary = getHabitSummary(data, selectedDate);
-  const selectedEvents = sortEvents(data.events.filter((event) => event.date === selectedDate), now);
+  const selectedEvents = sortEvents(data.events.filter((event) => eventOccursOnDate(event, selectedDate)), now);
   const selectedNotes = data.notes.filter((note) => note.date === selectedDate).sort((first, second) => second.createdAt.localeCompare(first.createdAt));
 
   function moveMonth(offset: number): void {
     onMonthChange(new Date(monthDate.getFullYear(), monthDate.getMonth() + offset, 1));
   }
 
+  function closeTopLayer(): void {
+    if (insightsOpen) {
+      setInsightsOpen(false);
+      return;
+    }
+
+    onClose();
+  }
+
   return (
-    <div className="modal-backdrop no-drag" role="dialog" aria-modal="true" aria-label="Calendar">
-      <div className="calendar-modal">
+    <div className="modal-backdrop no-drag" role="dialog" aria-modal="true" aria-label="Calendar" onMouseDown={closeTopLayer}>
+      <div className="calendar-modal" onMouseDown={(event) => event.stopPropagation()}>
         <div className="calendar-header">
           <button className="icon-button" type="button" aria-label="Previous month" title="Previous month" onClick={() => moveMonth(-1)}>
             <ChevronLeft size={19} />
@@ -973,7 +1326,7 @@ function CalendarDialog({
             const dateKey = toDateKey(date);
             const isCurrentMonth = date.getMonth() === monthDate.getMonth();
             const isSelected = dateKey === selectedDate;
-            const hasEvents = data.events.some((event) => event.date === dateKey);
+            const hasEvents = data.events.some((event) => eventOccursOnDate(event, dateKey));
             const marker = getCalendarHabitMarker(data, dateKey, todayKey);
 
             return (
@@ -1010,7 +1363,7 @@ function CalendarDialog({
               ) : (
                 selectedEvents.map((event) => (
                   <div className="detail-line detail-line-action" key={event.id}>
-                    <span>{event.startTime || 'All day'}</span>
+                    <span>{getEventDayLabel(event, selectedDate)}</span>
                     <p>
                       {event.important ? '★ ' : ''}
                       {event.title}
@@ -1093,8 +1446,8 @@ function SettingsDialog({
   }
 
   return (
-    <div className="modal-backdrop no-drag" role="dialog" aria-modal="true" aria-label="Settings">
-      <div className="settings-modal">
+    <div className="modal-backdrop no-drag" role="dialog" aria-modal="true" aria-label="Settings" onMouseDown={onClose}>
+      <div className="settings-modal" onMouseDown={(event) => event.stopPropagation()}>
         <div className="settings-header">
           <div>
             <p className="eyebrow">DotDay</p>

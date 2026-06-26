@@ -1,6 +1,10 @@
 # DotDay
 
-DotDay is a minimal Windows desktop widget for habits, events, and quick notes.
+DotDay is a minimal desktop widget for habits, flexible events, quick notes, and lightweight Plan Notes.
+
+Events can be recorded as a single moment, a timed duration that may cross days,
+or an all-day range. Plan Notes provide an undated checklist without turning
+DotDay into a full project-management app.
 
 ## Download
 

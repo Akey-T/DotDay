@@ -503,6 +503,66 @@ h2 {
   margin-bottom: 12px;
 }
 
+.event-type-control {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--soft);
+}
+
+.event-type-control button {
+  min-height: 31px;
+  border-radius: 7px;
+  color: var(--muted);
+  background: transparent;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.event-type-control button.active {
+  color: var(--accent);
+  background: #ffffff;
+  box-shadow: 0 1px 5px rgba(62, 45, 31, 0.1);
+}
+
+.event-field {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.event-field > span {
+  padding-left: 2px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.event-details-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 34px;
+  padding: 0 4px;
+  color: var(--muted);
+  background: transparent;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.event-details-toggle svg {
+  transition: transform 0.16s ease;
+}
+
+.event-details-toggle svg.open {
+  transform: rotate(180deg);
+}
+
 .event-form .wide,
 .note-form textarea,
 .note-form button {
@@ -513,6 +573,180 @@ h2 {
   display: grid;
   gap: 8px;
   margin-bottom: 12px;
+}
+
+.plan-launcher {
+  display: grid;
+  grid-template-columns: 1fr auto 18px;
+  align-items: center;
+  width: 100%;
+  min-height: 44px;
+  gap: 8px;
+  border: 1px solid rgba(249, 115, 22, 0.25);
+  border-radius: 12px;
+  padding: 0 12px;
+  color: var(--text);
+  background: rgba(255, 248, 241, 0.96);
+  box-shadow: 0 -8px 24px rgba(62, 45, 31, 0.08);
+  backdrop-filter: blur(12px);
+  cursor: pointer;
+}
+
+.plan-launcher:hover {
+  border-color: rgba(249, 115, 22, 0.55);
+  background: #ffffff;
+}
+
+.plan-launcher > span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.plan-launcher svg {
+  color: var(--accent);
+}
+
+.plan-launcher strong {
+  font-size: 13px;
+}
+
+.plan-launcher small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.plan-launcher-arrow {
+  transform: rotate(180deg);
+}
+
+.plan-backdrop {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  padding: 10px;
+  background: rgba(44, 38, 33, 0.18);
+  border-radius: 18px;
+  z-index: 30;
+}
+
+.plan-sheet {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: min(55vh, 370px);
+  min-height: 300px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 15px;
+  padding: 10px 12px 12px;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 -18px 42px rgba(62, 45, 31, 0.18);
+  backdrop-filter: blur(18px);
+  animation: plan-sheet-in 0.18s ease-out;
+}
+
+@keyframes plan-sheet-in {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.plan-sheet-handle {
+  width: 34px;
+  height: 4px;
+  flex: 0 0 auto;
+  margin: 0 auto 7px;
+  border-radius: 999px;
+  background: #ead8c8;
+}
+
+.plan-sheet-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.plan-sheet-header h2 {
+  margin-top: 2px;
+  font-size: 18px;
+}
+
+.plan-add-form {
+  flex: 0 0 auto;
+  margin: 0 0 10px;
+}
+
+.plan-list {
+  display: grid;
+  gap: 7px;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.plan-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 7px;
+  background: var(--soft);
+}
+
+.plan-row.dragging {
+  border-color: rgba(249, 115, 22, 0.48);
+  background: #fff7ee;
+  opacity: 0.72;
+}
+
+.plan-row.completed {
+  opacity: 0.58;
+}
+
+.plan-row.completed .plan-title {
+  text-decoration: line-through;
+}
+
+.plan-title {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.plan-row .ghost-button {
+  width: 27px;
+  height: 27px;
+  margin-left: 0;
+}
+
+.plan-row .plan-star.active {
+  color: var(--accent);
+}
+
+.plan-edit {
+  display: grid;
+  flex: 1;
+  gap: 6px;
+  min-width: 0;
+}
+
+.plan-edit input {
+  padding: 7px 8px;
 }
 
 input,
@@ -750,8 +984,8 @@ select:focus {
   text-decoration: line-through;
 }
 
-.event-card > div,
-.note-card > div {
+.event-card > div:first-child,
+.note-card > div:first-child {
   min-width: 0;
   flex: 1;
 }

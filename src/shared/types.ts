@@ -1,5 +1,6 @@
 export type DateKey = string;
 export type WidgetMode = 'collapsed' | 'expanded';
+export type EventTimeType = 'moment' | 'duration' | 'allDay';
 
 export interface WindowPosition {
   x: number;
@@ -18,8 +19,10 @@ export type HabitDayRecord = Record<string, boolean>;
 export interface EventItem {
   id: string;
   title: string;
-  date: DateKey;
+  timeType: EventTimeType;
+  startDate: DateKey;
   startTime: string;
+  endDate: DateKey;
   endTime: string;
   location: string;
   notes: string;
@@ -35,6 +38,14 @@ export interface QuickNote {
   time: string;
 }
 
+export interface PlanNote {
+  id: string;
+  title: string;
+  important: boolean;
+  completedAt?: string;
+  createdAt: string;
+}
+
 export interface DotDaySettings {
   widgetOpacity: number;
   reminderLeadMinutes: number;
@@ -48,6 +59,7 @@ export interface AkDailyData {
   habitRecords: Record<DateKey, HabitDayRecord>;
   events: EventItem[];
   notes: QuickNote[];
+  planNotes: PlanNote[];
   settings: DotDaySettings;
 }
 
