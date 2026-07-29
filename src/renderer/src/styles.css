@@ -972,16 +972,80 @@ select:focus {
   cursor: grabbing;
 }
 
-.habit-row span {
+.habit-content {
+  display: grid;
+  flex: 1;
+  gap: 2px;
+  min-width: 0;
+}
+
+.habit-content span {
   flex: 1;
   min-width: 0;
   overflow-wrap: anywhere;
   line-height: 1.35;
 }
 
-.habit-row span.done {
+.habit-content small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.habit-content span.done {
   color: var(--muted);
   text-decoration: line-through;
+}
+
+.habit-stepper {
+  display: grid;
+  grid-template-columns: 25px minmax(22px, auto) 25px;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 3px;
+  min-width: 78px;
+  border: 1px solid #ecd8c7;
+  border-radius: 999px;
+  padding: 2px;
+  background: rgba(255, 255, 255, 0.74);
+}
+
+.habit-stepper button {
+  display: grid;
+  width: 25px;
+  height: 25px;
+  place-items: center;
+  border-radius: 999px;
+  color: var(--accent);
+  background: transparent;
+  cursor: pointer;
+}
+
+.habit-stepper button:hover {
+  background: var(--accent-soft);
+}
+
+.habit-stepper strong {
+  min-width: 0;
+  color: var(--text);
+  font-size: 12px;
+  text-align: center;
+}
+
+.habit-add-options {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 8px;
+}
+
+.habit-type-control {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.habit-progress-fields {
+  display: grid;
+  grid-template-columns: 92px 1fr;
+  gap: 8px;
 }
 
 .event-card > div:first-child,

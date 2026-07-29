@@ -63,7 +63,7 @@ function ChartTooltip({ active, payload }: ChartTooltipProps): React.JSX.Element
         <>
           <span>{day.percent}% complete</span>
           <span>
-            {day.completed}/{day.total} habits
+            {day.completedLabel}/{day.total} habits
           </span>
         </>
       ) : (
@@ -83,7 +83,8 @@ function HabitChartTooltip({ active, payload }: HabitChartTooltipProps): React.J
   return (
     <div className="chart-tooltip">
       <strong>{day.date}</strong>
-      <span>{day.completed ? 'Completed' : 'Missed'}</span>
+      <span>{day.percent}% complete</span>
+      <span>{day.valueLabel}</span>
     </div>
   );
 }
@@ -208,7 +209,7 @@ export function InsightsPanel({ data, monthDate, today, onClose }: InsightsPanel
             <strong>{formatPercent(habitHistory.completionRate)}</strong>
           </div>
           <div>
-            <span>Effective days</span>
+            <span>Perfect / effective days</span>
             <strong>
               {habitHistory.completedDays}/{habitHistory.effectiveDays}
             </strong>

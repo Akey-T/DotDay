@@ -1,6 +1,7 @@
 export type DateKey = string;
 export type WidgetMode = 'collapsed' | 'expanded';
 export type EventTimeType = 'moment' | 'duration' | 'allDay';
+export type HabitType = 'checkbox' | 'progress';
 
 export interface WindowPosition {
   x: number;
@@ -12,9 +13,21 @@ export interface Habit {
   title: string;
   createdAt: string;
   archivedAt?: string;
+  type?: HabitType;
+  target?: number;
+  unit?: string;
 }
 
-export type HabitDayRecord = Record<string, boolean>;
+export interface HabitProgressRecord {
+  typeSnapshot: 'progress';
+  value: number;
+  targetSnapshot: number;
+  unitSnapshot?: string;
+  updatedAt?: string;
+}
+
+export type HabitRecordValue = boolean | HabitProgressRecord;
+export type HabitDayRecord = Record<string, HabitRecordValue>;
 
 export interface EventItem {
   id: string;

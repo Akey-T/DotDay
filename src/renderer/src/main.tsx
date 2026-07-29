@@ -12,6 +12,7 @@ import {
   GripVertical,
   MapPin,
   Maximize2,
+  Minus,
   Pencil,
   Plus,
   Settings,
@@ -20,9 +21,15 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import type { AkDailyData, DateKey, DotDaySettings, EventItem, EventTimeType, Habit, PlanNote, QuickNote, WidgetMode } from '../../shared/types';
+import type { AkDailyData, DateKey, DotDaySettings, EventItem, EventTimeType, Habit, HabitType, PlanNote, QuickNote, WidgetMode } from '../../shared/types';
 import { InsightsPanel } from './components/InsightsPanel';
-import { getStreakStatus } from './utils/analytics';
+import {
+  createProgressHabitRecord,
+  formatCompletedAmount,
+  getHabitCompletion,
+  getHabitValueWithUpdateLabel,
+  getStreakStatus,
+} from './utils/analytics';
 import './styles.css';
 
 const defaultSettings: DotDaySettings = {
@@ -105,10 +112,11 @@ function getHabitsForDate(data: AkDailyData, dateKey: DateKey): Habit[] {
 function getHabitSummary(data: AkDailyData, dateKey: DateKey) {
   const habits = getHabitsForDate(data, dateKey);
   const record = data.habitRecords[dateKey] ?? {};
-  const completed = habits.filter((habit) => record[habit.id]).length;
+  const completed = habits.reduce((total, habit) => total + getHabitCompletion(habit, record[habit.id]).ratio, 0);
 
   return {
     completed,
+    completedLabel: formatCompletedAmount(completed),
     total: habits.length,
     percent: habits.length === 0 ? 0 : Math.round((completed / habits.length) * 100),
   };
@@ -125,11 +133,11 @@ function getCalendarHabitMarker(data: AkDailyData, dateKey: DateKey, todayKey: D
     return '';
   }
 
-  if (summary.completed === summary.total) {
+  if (summary.percent === 100) {
     return '●';
   }
 
-  if (summary.completed > 0) {
+  if (summary.percent > 0) {
     return '◐';
   }
 
@@ -257,6 +265,9 @@ function App(): React.JSX.Element {
   const [loadError, setLoadError] = React.useState('');
   const [widgetMode, setWidgetMode] = React.useState<WidgetMode>('collapsed');
   const [habitTitle, setHabitTitle] = React.useState('');
+  const [habitType, setHabitType] = React.useState<HabitType>('checkbox');
+  const [habitTarget, setHabitTarget] = React.useState('5');
+  const [habitUnit, setHabitUnit] = React.useState('');
   const [eventForm, setEventForm] = React.useState({
     title: '',
     timeType: 'moment' as EventTimeType,
@@ -287,6 +298,8 @@ function App(): React.JSX.Element {
   const [settingsOpen, setSettingsOpen] = React.useState(false);
   const [calendarMonth, setCalendarMonth] = React.useState(new Date());
   const [selectedDate, setSelectedDate] = React.useState<DateKey>(todayKey);
+  const dataRef = React.useRef<AkDailyData>(initialData);
+  const saveVersionRef = React.useRef(0);
 
   React.useEffect(() => {
     if (!window.akDaily) {
@@ -301,6 +314,10 @@ function App(): React.JSX.Element {
       .catch(() => setLoadError('Local data could not be loaded. Restart the app.'))
       .finally(() => setIsLoading(false));
   }, []);
+
+  React.useEffect(() => {
+    dataRef.current = data;
+  }, [data]);
 
   React.useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 5_000);
@@ -333,8 +350,16 @@ function App(): React.JSX.Element {
   }, [data.settings.autoCollapseOnBlur]);
 
   const commitData = React.useCallback((nextData: AkDailyData) => {
+    const saveVersion = saveVersionRef.current + 1;
+    saveVersionRef.current = saveVersion;
+    dataRef.current = nextData;
     setData(nextData);
-    void window.akDaily.saveData(nextData).then(setData);
+    void window.akDaily.saveData(nextData).then((savedData) => {
+      if (saveVersionRef.current === saveVersion) {
+        dataRef.current = savedData;
+        setData(savedData);
+      }
+    });
   }, []);
 
   const todayHabits = getHabitsForDate(data, todayKey);
@@ -377,6 +402,8 @@ function App(): React.JSX.Element {
   function addHabit(event: React.FormEvent): void {
     event.preventDefault();
     const title = habitTitle.trim();
+    const target = Math.max(1, Math.round(Number(habitTarget) || 1));
+    const unit = habitUnit.trim();
 
     if (!title) {
       return;
@@ -389,23 +416,76 @@ function App(): React.JSX.Element {
         {
           id: createId('habit'),
           title,
+          type: habitType,
+          target: habitType === 'progress' ? target : undefined,
+          unit: habitType === 'progress' && unit ? unit : undefined,
           createdAt: new Date().toISOString(),
         },
       ],
     });
     setHabitTitle('');
+    setHabitType('checkbox');
+    setHabitTarget('5');
+    setHabitUnit('');
   }
 
   function toggleHabit(habitId: string): void {
-    const currentRecord = data.habitRecords[todayKey] ?? {};
+    const currentData = dataRef.current;
+    const habit = currentData.habits.find((item) => item.id === habitId);
+    if (!habit) {
+      return;
+    }
+
+    if (habit.type === 'progress') {
+      const currentRecord = currentData.habitRecords[todayKey] ?? {};
+      const currentCompletion = getHabitCompletion(habit, currentRecord[habitId]);
+      const nextValue = currentCompletion.completed ? 0 : currentCompletion.target;
+
+      commitData({
+        ...currentData,
+        habitRecords: {
+          ...currentData.habitRecords,
+          [todayKey]: {
+            ...currentRecord,
+            [habitId]: createProgressHabitRecord(habit, nextValue),
+          },
+        },
+      });
+      return;
+    }
+
+    const currentRecord = currentData.habitRecords[todayKey] ?? {};
 
     commitData({
-      ...data,
+      ...currentData,
       habitRecords: {
-        ...data.habitRecords,
+        ...currentData.habitRecords,
         [todayKey]: {
           ...currentRecord,
           [habitId]: !currentRecord[habitId],
+        },
+      },
+    });
+  }
+
+  function updateProgressHabit(habitId: string, delta: number): void {
+    const currentData = dataRef.current;
+    const habit = currentData.habits.find((item) => item.id === habitId);
+    if (!habit || habit.type !== 'progress') {
+      return;
+    }
+
+    const currentRecord = currentData.habitRecords[todayKey] ?? {};
+    const currentCompletion = getHabitCompletion(habit, currentRecord[habitId]);
+    const nextValue = Math.max(0, currentCompletion.value + delta);
+
+    commitData({
+      ...currentData,
+      habitRecords: {
+        ...currentData.habitRecords,
+        [todayKey]: {
+          ...currentRecord,
+          [habitId]: createProgressHabitRecord(habit, nextValue),
         },
       },
     });
@@ -791,7 +871,7 @@ function App(): React.JSX.Element {
             <div className="compact-score">
               <strong>{todaySummary.percent}%</strong>
               <span>
-                {todaySummary.completed}/{todaySummary.total}
+                {todaySummary.completedLabel}/{todaySummary.total}
               </span>
             </div>
           </div>
@@ -862,7 +942,7 @@ function App(): React.JSX.Element {
               </div>
             </div>
             <p>
-              {todaySummary.completed}/{todaySummary.total} done · {todaySummary.percent}%
+              {todaySummary.completedLabel}/{todaySummary.total} done · {todaySummary.percent}%
             </p>
           </div>
           <div className="progress-ring" aria-label={`Today progress ${todaySummary.percent}%`}>
@@ -875,7 +955,8 @@ function App(): React.JSX.Element {
             <p className="empty">No habits yet.</p>
           ) : (
             todayHabits.map((habit) => {
-              const checked = Boolean(data.habitRecords[todayKey]?.[habit.id]);
+              const completion = getHabitCompletion(habit, data.habitRecords[todayKey]?.[habit.id]);
+              const checked = completion.completed;
               return (
                 <div
                   className={`habit-row ${draggedHabitId === habit.id ? 'dragging' : ''}`}
@@ -907,7 +988,21 @@ function App(): React.JSX.Element {
                   <button className={`check-button ${checked ? 'checked' : ''}`} type="button" aria-label="Toggle habit" onClick={() => toggleHabit(habit.id)}>
                     {checked ? <Check size={16} /> : null}
                   </button>
-                  <span className={checked ? 'done' : ''}>{habit.title}</span>
+                  <div className="habit-content">
+                    <span className={checked ? 'done' : ''}>{habit.title}</span>
+                    {completion.type === 'progress' ? <small>{getHabitValueWithUpdateLabel(completion)}</small> : null}
+                  </div>
+                  {completion.type === 'progress' ? (
+                    <div className="habit-stepper" aria-label={`${habit.title} progress`}>
+                      <button type="button" aria-label="Decrease progress" title="Decrease" onClick={() => updateProgressHabit(habit.id, -1)}>
+                        <Minus size={13} />
+                      </button>
+                      <strong>{formatCompletedAmount(completion.value)}</strong>
+                      <button type="button" aria-label="Increase progress" title="Increase" onClick={() => updateProgressHabit(habit.id, 1)}>
+                        <Plus size={13} />
+                      </button>
+                    </div>
+                  ) : null}
                   <button className="ghost-button" type="button" aria-label="Delete habit" title="Delete" onClick={() => archiveHabit(habit.id)}>
                     <Trash2 size={15} />
                   </button>
@@ -922,6 +1017,32 @@ function App(): React.JSX.Element {
           <button className="icon-button accent" type="submit" aria-label="Add habit" title="Add">
             <Plus size={18} />
           </button>
+          <div className="habit-add-options">
+            <div className="event-type-control habit-type-control" role="group" aria-label="Habit type">
+              {[
+                ['checkbox', 'Check'],
+                ['progress', 'Progress'],
+              ].map(([value, label]) => (
+                <button className={habitType === value ? 'active' : ''} key={value} type="button" onClick={() => setHabitType(value as HabitType)}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            {habitType === 'progress' ? (
+              <div className="habit-progress-fields">
+                <input
+                  min="1"
+                  step="1"
+                  type="number"
+                  value={habitTarget}
+                  onChange={(event) => setHabitTarget(event.target.value)}
+                  placeholder="Target"
+                  aria-label="Habit target"
+                />
+                <input value={habitUnit} onChange={(event) => setHabitUnit(event.target.value)} placeholder="Unit, e.g. cups" aria-label="Habit unit" />
+              </div>
+            ) : null}
+          </div>
         </form>
       </section>
 
@@ -1352,7 +1473,7 @@ function CalendarDialog({
             <div className="detail-head">
               <strong>{formatDisplayDate(selectedDate)}</strong>
               <span>
-                {selectedSummary.completed}/{selectedSummary.total} habits
+                {selectedSummary.completedLabel}/{selectedSummary.total} habits
               </span>
             </div>
 

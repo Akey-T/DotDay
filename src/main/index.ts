@@ -3,7 +3,19 @@ import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { AkDailyData, DotDaySettings, EventItem, EventTimeType, PlanNote, WidgetMode, WindowPosition } from '../shared/types';
+import type {
+  AkDailyData,
+  DotDaySettings,
+  EventItem,
+  EventTimeType,
+  Habit,
+  HabitDayRecord,
+  HabitProgressRecord,
+  HabitRecordValue,
+  PlanNote,
+  WidgetMode,
+  WindowPosition,
+} from '../shared/types';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -133,11 +145,12 @@ function normalizeData(value: unknown): AkDailyData {
     : [];
 
   return {
-    habits: Array.isArray(incoming.habits) ? incoming.habits : [],
-    habitRecords:
-      incoming.habitRecords && typeof incoming.habitRecords === 'object' && !Array.isArray(incoming.habitRecords)
-        ? incoming.habitRecords
-        : {},
+    habits: Array.isArray(incoming.habits)
+      ? incoming.habits
+          .map((item) => normalizeHabit(item))
+          .filter((item): item is Habit => Boolean(item))
+      : [],
+    habitRecords: normalizeHabitRecords(incoming.habitRecords),
     events,
     notes: Array.isArray(incoming.notes) ? incoming.notes : [],
     planNotes,
@@ -169,6 +182,79 @@ function normalizeData(value: unknown): AkDailyData {
           : defaultSettings.windowPosition,
     },
   };
+}
+
+function normalizeHabit(value: unknown): Habit | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const habit = value as Partial<Habit>;
+  if (typeof habit.id !== 'string' || typeof habit.title !== 'string') {
+    return null;
+  }
+
+  const type = habit.type === 'progress' ? 'progress' : 'checkbox';
+  const target = typeof habit.target === 'number' && Number.isFinite(habit.target) ? Math.max(1, Math.round(habit.target)) : undefined;
+  const unit = typeof habit.unit === 'string' ? habit.unit.trim().slice(0, 24) : '';
+
+  return {
+    id: habit.id,
+    title: habit.title,
+    createdAt: typeof habit.createdAt === 'string' ? habit.createdAt : new Date().toISOString(),
+    archivedAt: typeof habit.archivedAt === 'string' ? habit.archivedAt : undefined,
+    type,
+    target: type === 'progress' ? target ?? 1 : undefined,
+    unit: type === 'progress' && unit ? unit : undefined,
+  };
+}
+
+function normalizeHabitRecordValue(value: unknown): HabitRecordValue | null {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const record = value as Partial<HabitProgressRecord>;
+  const rawValue = typeof record.value === 'number' && Number.isFinite(record.value) ? record.value : 0;
+  const rawTarget = typeof record.targetSnapshot === 'number' && Number.isFinite(record.targetSnapshot) ? record.targetSnapshot : 1;
+  const unit = typeof record.unitSnapshot === 'string' ? record.unitSnapshot.trim().slice(0, 24) : '';
+
+  return {
+    typeSnapshot: 'progress',
+    value: Math.max(0, Math.round(rawValue)),
+    targetSnapshot: Math.max(1, Math.round(rawTarget)),
+    unitSnapshot: unit || undefined,
+    updatedAt: typeof record.updatedAt === 'string' ? record.updatedAt : undefined,
+  };
+}
+
+function normalizeHabitRecords(value: unknown): Record<string, HabitDayRecord> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
+
+  return Object.entries(value as Record<string, unknown>).reduce<Record<string, HabitDayRecord>>((records, [dateKey, dayRecord]) => {
+    if (!dayRecord || typeof dayRecord !== 'object' || Array.isArray(dayRecord)) {
+      return records;
+    }
+
+    const normalizedDayRecord = Object.entries(dayRecord as Record<string, unknown>).reduce<HabitDayRecord>((dayRecords, [habitId, recordValue]) => {
+      const normalized = normalizeHabitRecordValue(recordValue);
+
+      if (normalized !== null) {
+        dayRecords[habitId] = normalized;
+      }
+
+      return dayRecords;
+    }, {});
+
+    records[dateKey] = normalizedDayRecord;
+    return records;
+  }, {});
 }
 
 function normalizeEvent(value: unknown): EventItem | null {
