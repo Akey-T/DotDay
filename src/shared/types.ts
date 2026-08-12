@@ -64,6 +64,7 @@ export interface DotDaySettings {
   reminderLeadMinutes: number;
   autoCollapseOnBlur: boolean;
   launchAtStartup: boolean;
+  nativeNotifications: boolean;
   windowPosition: WindowPosition | null;
 }
 
@@ -79,6 +80,10 @@ export interface AkDailyData {
 export interface AkDailyApi {
   getData: () => Promise<AkDailyData>;
   saveData: (data: AkDailyData) => Promise<AkDailyData>;
+  exportData: () => Promise<{ ok: boolean; path?: string; error?: string }>;
+  importData: () => Promise<{ ok: boolean; data?: AkDailyData; error?: string }>;
+  openDataFolder: () => Promise<void>;
+  showNotification: (notification: { title: string; body: string }) => Promise<void>;
   setWidgetMode: (mode: WidgetMode) => Promise<void>;
   setAutoCollapseOnBlur: (enabled: boolean) => Promise<void>;
   onWidgetModeChanged: (callback: (mode: WidgetMode) => void) => () => void;

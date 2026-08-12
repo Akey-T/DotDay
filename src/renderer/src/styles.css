@@ -948,6 +948,10 @@ select:focus {
   align-items: center;
 }
 
+.habit-row.editing {
+  align-items: flex-start;
+}
+
 .habit-row.dragging {
   border-color: rgba(249, 115, 22, 0.46);
   background: #fff7ee;
@@ -1021,6 +1025,18 @@ select:focus {
   cursor: pointer;
 }
 
+.habit-stepper-value {
+  width: auto;
+  min-width: 22px;
+  height: 25px;
+  padding: 0 3px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 800;
+  background: transparent;
+  cursor: text;
+}
+
 .habit-stepper button:hover {
   background: var(--accent-soft);
 }
@@ -1030,6 +1046,23 @@ select:focus {
   color: var(--text);
   font-size: 12px;
   text-align: center;
+}
+
+.habit-progress-input {
+  width: 36px;
+  height: 25px;
+  padding: 0 4px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.habit-edit-form {
+  display: grid;
+  flex: 1;
+  gap: 8px;
+  min-width: 0;
 }
 
 .habit-add-options {
@@ -1228,6 +1261,27 @@ select:focus {
   width: 18px;
   height: 18px;
   accent-color: var(--accent);
+}
+
+.settings-button-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.settings-button-grid .secondary-button {
+  gap: 6px;
+  justify-content: center;
+  font-size: 12px;
+}
+
+.settings-button-grid .wide {
+  grid-column: 1 / -1;
+}
+
+.settings-status {
+  color: var(--muted);
+  font-size: 12px;
 }
 
 input[type="range"] {
@@ -1560,6 +1614,33 @@ input[type="range"] {
   font-size: 11px;
 }
 
+.insight-summary-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.insight-summary-grid > div {
+  display: grid;
+  gap: 4px;
+  border: 1px solid #f3e7dc;
+  border-radius: 10px;
+  padding: 9px 10px;
+  background: rgba(255, 255, 255, 0.64);
+}
+
+.insight-summary-grid span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.insight-summary-grid strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .insight-chart-card {
   padding: 10px;
 }
@@ -1601,7 +1682,7 @@ input[type="range"] {
 
 .habit-history-summary {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   gap: 8px;
 }
 

@@ -4,6 +4,10 @@ import type { AkDailyApi, AkDailyData, WidgetMode } from '../shared/types';
 const api: AkDailyApi = {
   getData: () => ipcRenderer.invoke('ak-daily:get-data'),
   saveData: (data: AkDailyData) => ipcRenderer.invoke('ak-daily:save-data', data),
+  exportData: () => ipcRenderer.invoke('ak-daily:export-data'),
+  importData: () => ipcRenderer.invoke('ak-daily:import-data'),
+  openDataFolder: () => ipcRenderer.invoke('ak-daily:open-data-folder'),
+  showNotification: (notification) => ipcRenderer.invoke('dotday:show-notification', notification),
   setWidgetMode: (mode: WidgetMode) => ipcRenderer.invoke('dotday:set-widget-mode', mode),
   setAutoCollapseOnBlur: (enabled: boolean) => ipcRenderer.invoke('dotday:set-auto-collapse-on-blur', enabled),
   onWidgetModeChanged: (callback: (mode: WidgetMode) => void) => {

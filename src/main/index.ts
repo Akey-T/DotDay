@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, screen } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Notification, screen, shell } from 'electron';
 import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -24,6 +24,7 @@ const defaultSettings: DotDaySettings = {
   reminderLeadMinutes: 5,
   autoCollapseOnBlur: true,
   launchAtStartup: false,
+  nativeNotifications: false,
   windowPosition: null,
 };
 
@@ -169,6 +170,10 @@ function normalizeData(value: unknown): AkDailyData {
           : defaultSettings.autoCollapseOnBlur,
       launchAtStartup:
         typeof incomingSettings.launchAtStartup === 'boolean' ? incomingSettings.launchAtStartup : defaultSettings.launchAtStartup,
+      nativeNotifications:
+        typeof incomingSettings.nativeNotifications === 'boolean'
+          ? incomingSettings.nativeNotifications
+          : defaultSettings.nativeNotifications,
       windowPosition:
         incomingSettings.windowPosition &&
         typeof incomingSettings.windowPosition.x === 'number' &&
@@ -512,11 +517,67 @@ ipcMain.handle('ak-daily:save-data', (_event, data: AkDailyData) =>
     return saved;
   }),
 );
+ipcMain.handle('ak-daily:export-data', async () => {
+  const data = await readData();
+  const result = mainWindow
+    ? await dialog.showSaveDialog(mainWindow, {
+        title: 'Export DotDay backup',
+        defaultPath: `dotday-backup-${new Date().toISOString().slice(0, 10)}.json`,
+        filters: [{ name: 'JSON', extensions: ['json'] }],
+      })
+    : await dialog.showSaveDialog({
+    title: 'Export DotDay backup',
+    defaultPath: `dotday-backup-${new Date().toISOString().slice(0, 10)}.json`,
+    filters: [{ name: 'JSON', extensions: ['json'] }],
+      });
+
+  if (result.canceled || !result.filePath) {
+    return { ok: false };
+  }
+
+  await writeFile(result.filePath, JSON.stringify(data, null, 2), 'utf-8');
+  return { ok: true, path: result.filePath };
+});
+ipcMain.handle('ak-daily:import-data', async () => {
+  const options = {
+    title: 'Import DotDay backup',
+    properties: ['openFile'] as ('openFile')[],
+    filters: [{ name: 'JSON', extensions: ['json'] }],
+  };
+  const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
+
+  if (result.canceled || result.filePaths.length === 0) {
+    return { ok: false };
+  }
+
+  try {
+    const raw = await readFile(result.filePaths[0], 'utf-8');
+    const imported = normalizeData(JSON.parse(raw));
+    const saved = await writeData(imported);
+    autoCollapseOnBlur = saved.settings.autoCollapseOnBlur;
+    applyLaunchAtStartup(saved.settings.launchAtStartup);
+    return { ok: true, data: saved };
+  } catch {
+    return { ok: false, error: 'The selected file is not a valid DotDay backup.' };
+  }
+});
+ipcMain.handle('ak-daily:open-data-folder', () => shell.openPath(dirname(getDataFilePath())));
 ipcMain.handle('dotday:set-widget-mode', (_event, mode: WidgetMode) => {
   placeWindow(mode);
 });
 ipcMain.handle('dotday:set-auto-collapse-on-blur', (_event, enabled: boolean) => {
   autoCollapseOnBlur = enabled;
+});
+ipcMain.handle('dotday:show-notification', (_event, notification: { title?: string; body?: string }) => {
+  if (!Notification.isSupported()) {
+    return;
+  }
+
+  new Notification({
+    title: notification.title || 'DotDay',
+    body: notification.body || '',
+    silent: false,
+  }).show();
 });
 ipcMain.handle('dotday:close-window', () => {
   mainWindow?.close();

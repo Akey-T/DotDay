@@ -47,6 +47,18 @@ function formatChartPercent(value: number): string {
   return `${value}%`;
 }
 
+function formatDelta(value: number | null): string {
+  if (value === null) {
+    return 'No comparison';
+  }
+
+  if (value === 0) {
+    return 'Even with last week';
+  }
+
+  return `${value > 0 ? '+' : ''}${value}% vs last week`;
+}
+
 function ChartTooltip({ active, payload }: ChartTooltipProps): React.JSX.Element | null {
   if (!active || !payload || payload.length === 0) {
     return null;
@@ -140,6 +152,21 @@ export function InsightsPanel({ data, monthDate, today, onClose }: InsightsPanel
         <MetricCard label="Perfect days this month" value={insights.perfectDaysThisMonth} suffix="days" />
       </div>
 
+      <div className="insight-summary-grid">
+        <div>
+          <span>Momentum</span>
+          <strong>{formatDelta(insights.weekDelta)}</strong>
+        </div>
+        <div>
+          <span>Best habit</span>
+          <strong>{insights.bestHabit ? `${insights.bestHabit.habit.title} · ${insights.bestHabit.completionRate}%` : 'No data'}</strong>
+        </div>
+        <div>
+          <span>Needs attention</span>
+          <strong>{insights.weakestHabit ? `${insights.weakestHabit.habit.title} · ${insights.weakestHabit.completionRate}%` : 'No data'}</strong>
+        </div>
+      </div>
+
       <div className="insight-chart-card">
         <div className="insight-chart-head">
           <strong>This week average</strong>
@@ -214,6 +241,12 @@ export function InsightsPanel({ data, monthDate, today, onClose }: InsightsPanel
               {habitHistory.completedDays}/{habitHistory.effectiveDays}
             </strong>
           </div>
+          {habitHistory.averageValueLabel ? (
+            <div>
+              <span>Average value</span>
+              <strong>{habitHistory.averageValueLabel}</strong>
+            </div>
+          ) : null}
         </div>
 
         <div className="insight-chart habit-history-chart">

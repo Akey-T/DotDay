@@ -8,7 +8,9 @@ import {
   ChevronRight,
   ClipboardList,
   Clock,
+  Download,
   Flag,
+  FolderOpen,
   GripVertical,
   MapPin,
   Maximize2,
@@ -19,6 +21,7 @@ import {
   Star,
   StickyNote,
   Trash2,
+  Upload,
   X,
 } from 'lucide-react';
 import type { AkDailyData, DateKey, DotDaySettings, EventItem, EventTimeType, Habit, HabitType, PlanNote, QuickNote, WidgetMode } from '../../shared/types';
@@ -37,6 +40,7 @@ const defaultSettings: DotDaySettings = {
   reminderLeadMinutes: 5,
   autoCollapseOnBlur: true,
   launchAtStartup: false,
+  nativeNotifications: false,
   windowPosition: null,
 };
 
@@ -268,6 +272,15 @@ function App(): React.JSX.Element {
   const [habitType, setHabitType] = React.useState<HabitType>('checkbox');
   const [habitTarget, setHabitTarget] = React.useState('5');
   const [habitUnit, setHabitUnit] = React.useState('');
+  const [editingHabitId, setEditingHabitId] = React.useState<string | null>(null);
+  const [habitEditForm, setHabitEditForm] = React.useState({
+    title: '',
+    type: 'checkbox' as HabitType,
+    target: '5',
+    unit: '',
+  });
+  const [editingProgressHabitId, setEditingProgressHabitId] = React.useState<string | null>(null);
+  const [progressDraft, setProgressDraft] = React.useState('');
   const [eventForm, setEventForm] = React.useState({
     title: '',
     timeType: 'moment' as EventTimeType,
@@ -284,6 +297,7 @@ function App(): React.JSX.Element {
   const [eventError, setEventError] = React.useState('');
   const [editingEventId, setEditingEventId] = React.useState<string | null>(null);
   const [acknowledgedReminderIds, setAcknowledgedReminderIds] = React.useState<Set<string>>(() => new Set());
+  const [nativeNotifiedReminderIds, setNativeNotifiedReminderIds] = React.useState<Set<string>>(() => new Set());
   const [noteContent, setNoteContent] = React.useState('');
   const [noteFormOpen, setNoteFormOpen] = React.useState(false);
   const [editingNoteId, setEditingNoteId] = React.useState<string | null>(null);
@@ -370,6 +384,16 @@ function App(): React.JSX.Element {
   const reminderEvent = todayEvents.find((event) => shouldRemindForEvent(event, now, acknowledgedReminderIds, data.settings.reminderLeadMinutes));
   const reminderMinutes = reminderEvent ? Math.max(0, Math.ceil((getEventStart(reminderEvent).getTime() - now.getTime()) / 60_000)) : null;
   const todayNotes = data.notes.filter((note) => note.date === todayKey).sort((first, second) => second.createdAt.localeCompare(first.createdAt));
+  const sortedTodayHabits = [...todayHabits].sort((first, second) => {
+    const firstDone = getHabitCompletion(first, data.habitRecords[todayKey]?.[first.id]).completed;
+    const secondDone = getHabitCompletion(second, data.habitRecords[todayKey]?.[second.id]).completed;
+
+    if (firstDone !== secondDone) {
+      return firstDone ? 1 : -1;
+    }
+
+    return todayHabits.indexOf(first) - todayHabits.indexOf(second);
+  });
   const sortedPlanNotes = [...data.planNotes].sort((first, second) => {
     if (Boolean(first.completedAt) !== Boolean(second.completedAt)) {
       return first.completedAt ? 1 : -1;
@@ -379,6 +403,18 @@ function App(): React.JSX.Element {
   const openPlanCount = data.planNotes.filter((plan) => !plan.completedAt).length;
   const streakStatus = React.useMemo(() => getStreakStatus(data, now), [data, now]);
   const shellStyle = { '--widget-opacity': String(data.settings.widgetOpacity / 100) } as React.CSSProperties;
+
+  React.useEffect(() => {
+    if (!reminderEvent || !data.settings.nativeNotifications || nativeNotifiedReminderIds.has(reminderEvent.id)) {
+      return;
+    }
+
+    setNativeNotifiedReminderIds((currentIds) => new Set([...currentIds, reminderEvent.id]));
+    void window.akDaily.showNotification({
+      title: reminderEvent.title,
+      body: `${getEventTimeLabel(reminderEvent, reminderEvent.startDate !== reminderEvent.endDate)}${reminderEvent.location ? ` · ${reminderEvent.location}` : ''}`,
+    });
+  }, [data.settings.nativeNotifications, nativeNotifiedReminderIds, reminderEvent]);
 
   function setMode(mode: WidgetMode): void {
     setCalendarOpen(false);
@@ -427,6 +463,56 @@ function App(): React.JSX.Element {
     setHabitType('checkbox');
     setHabitTarget('5');
     setHabitUnit('');
+  }
+
+  function editHabit(habit: Habit): void {
+    const type = habit.type === 'progress' ? 'progress' : 'checkbox';
+
+    setEditingHabitId(habit.id);
+    setEditingProgressHabitId(null);
+    setHabitEditForm({
+      title: habit.title,
+      type,
+      target: String(habit.target ?? 5),
+      unit: habit.unit ?? '',
+    });
+  }
+
+  function cancelHabitEdit(): void {
+    setEditingHabitId(null);
+    setHabitEditForm({
+      title: '',
+      type: 'checkbox',
+      target: '5',
+      unit: '',
+    });
+  }
+
+  function saveHabitEdit(habitId: string): void {
+    const title = habitEditForm.title.trim();
+
+    if (!title) {
+      return;
+    }
+
+    const target = Math.max(1, Math.round(Number(habitEditForm.target) || 1));
+    const unit = habitEditForm.unit.trim();
+
+    commitData({
+      ...data,
+      habits: data.habits.map((habit) =>
+        habit.id === habitId
+          ? {
+              ...habit,
+              title,
+              type: habitEditForm.type,
+              target: habitEditForm.type === 'progress' ? target : undefined,
+              unit: habitEditForm.type === 'progress' && unit ? unit : undefined,
+            }
+          : habit,
+      ),
+    });
+    cancelHabitEdit();
   }
 
   function toggleHabit(habitId: string): void {
@@ -491,11 +577,57 @@ function App(): React.JSX.Element {
     });
   }
 
+  function startProgressEdit(habit: Habit): void {
+    if (habit.type !== 'progress') {
+      return;
+    }
+
+    const completion = getHabitCompletion(habit, data.habitRecords[todayKey]?.[habit.id]);
+    setEditingProgressHabitId(habit.id);
+    setProgressDraft(String(completion.value));
+  }
+
+  function cancelProgressEdit(): void {
+    setEditingProgressHabitId(null);
+    setProgressDraft('');
+  }
+
+  function saveProgressEdit(habitId: string): void {
+    const currentData = dataRef.current;
+    const habit = currentData.habits.find((item) => item.id === habitId);
+
+    if (!habit || habit.type !== 'progress') {
+      cancelProgressEdit();
+      return;
+    }
+
+    const value = Math.max(0, Math.round(Number(progressDraft) || 0));
+    const currentRecord = currentData.habitRecords[todayKey] ?? {};
+
+    commitData({
+      ...currentData,
+      habitRecords: {
+        ...currentData.habitRecords,
+        [todayKey]: {
+          ...currentRecord,
+          [habitId]: createProgressHabitRecord(habit, value),
+        },
+      },
+    });
+    cancelProgressEdit();
+  }
+
   function updateSettings(nextSettings: DotDaySettings): void {
     commitData({
       ...data,
       settings: nextSettings,
     });
+  }
+
+  function applyImportedData(importedData: AkDailyData): void {
+    saveVersionRef.current += 1;
+    dataRef.current = importedData;
+    setData(importedData);
   }
 
   function reorderHabit(sourceHabitId: string, targetHabitId: string): void {
@@ -954,12 +1086,15 @@ function App(): React.JSX.Element {
           {todayHabits.length === 0 ? (
             <p className="empty">No habits yet.</p>
           ) : (
-            todayHabits.map((habit) => {
+            sortedTodayHabits.map((habit) => {
               const completion = getHabitCompletion(habit, data.habitRecords[todayKey]?.[habit.id]);
               const checked = completion.completed;
+              const isEditingHabit = editingHabitId === habit.id;
+              const isEditingProgress = editingProgressHabitId === habit.id;
+
               return (
                 <div
-                  className={`habit-row ${draggedHabitId === habit.id ? 'dragging' : ''}`}
+                  className={`habit-row ${isEditingHabit ? 'editing' : ''} ${draggedHabitId === habit.id ? 'dragging' : ''}`}
                   key={habit.id}
                   onDragOver={(event) => event.preventDefault()}
                   onDrop={(event) => {
@@ -988,24 +1123,99 @@ function App(): React.JSX.Element {
                   <button className={`check-button ${checked ? 'checked' : ''}`} type="button" aria-label="Toggle habit" onClick={() => toggleHabit(habit.id)}>
                     {checked ? <Check size={16} /> : null}
                   </button>
-                  <div className="habit-content">
-                    <span className={checked ? 'done' : ''}>{habit.title}</span>
-                    {completion.type === 'progress' ? <small>{getHabitValueWithUpdateLabel(completion)}</small> : null}
-                  </div>
-                  {completion.type === 'progress' ? (
-                    <div className="habit-stepper" aria-label={`${habit.title} progress`}>
-                      <button type="button" aria-label="Decrease progress" title="Decrease" onClick={() => updateProgressHabit(habit.id, -1)}>
-                        <Minus size={13} />
-                      </button>
-                      <strong>{formatCompletedAmount(completion.value)}</strong>
-                      <button type="button" aria-label="Increase progress" title="Increase" onClick={() => updateProgressHabit(habit.id, 1)}>
-                        <Plus size={13} />
-                      </button>
+                  {isEditingHabit ? (
+                    <div className="habit-edit-form">
+                      <input value={habitEditForm.title} onChange={(event) => setHabitEditForm({ ...habitEditForm, title: event.target.value })} autoFocus />
+                      <div className="event-type-control habit-type-control" role="group" aria-label="Habit type">
+                        {[
+                          ['checkbox', 'Check'],
+                          ['progress', 'Progress'],
+                        ].map(([value, label]) => (
+                          <button
+                            className={habitEditForm.type === value ? 'active' : ''}
+                            key={value}
+                            type="button"
+                            onClick={() => setHabitEditForm({ ...habitEditForm, type: value as HabitType })}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                      {habitEditForm.type === 'progress' ? (
+                        <div className="habit-progress-fields">
+                          <input
+                            min="1"
+                            step="1"
+                            type="number"
+                            value={habitEditForm.target}
+                            onChange={(event) => setHabitEditForm({ ...habitEditForm, target: event.target.value })}
+                            aria-label="Habit target"
+                          />
+                          <input
+                            value={habitEditForm.unit}
+                            onChange={(event) => setHabitEditForm({ ...habitEditForm, unit: event.target.value })}
+                            placeholder="Unit"
+                            aria-label="Habit unit"
+                          />
+                        </div>
+                      ) : null}
+                      <div className="edit-actions">
+                        <button className="small-button accent" type="button" onClick={() => saveHabitEdit(habit.id)}>
+                          Save
+                        </button>
+                        <button className="small-button" type="button" onClick={cancelHabitEdit}>
+                          Cancel
+                        </button>
+                      </div>
                     </div>
-                  ) : null}
-                  <button className="ghost-button" type="button" aria-label="Delete habit" title="Delete" onClick={() => archiveHabit(habit.id)}>
-                    <Trash2 size={15} />
-                  </button>
+                  ) : (
+                    <>
+                      <div className="habit-content">
+                        <span className={checked ? 'done' : ''}>{habit.title}</span>
+                        {completion.type === 'progress' ? <small>{getHabitValueWithUpdateLabel(completion)}</small> : null}
+                      </div>
+                      {completion.type === 'progress' ? (
+                        <div className="habit-stepper" aria-label={`${habit.title} progress`}>
+                          <button type="button" aria-label="Decrease progress" title="Decrease" onClick={() => updateProgressHabit(habit.id, -1)}>
+                            <Minus size={13} />
+                          </button>
+                          {isEditingProgress ? (
+                            <input
+                              className="habit-progress-input"
+                              min="0"
+                              step="1"
+                              type="number"
+                              value={progressDraft}
+                              onBlur={() => saveProgressEdit(habit.id)}
+                              onChange={(event) => setProgressDraft(event.target.value)}
+                              onKeyDown={(event) => {
+                                if (event.key === 'Enter') {
+                                  saveProgressEdit(habit.id);
+                                }
+                                if (event.key === 'Escape') {
+                                  cancelProgressEdit();
+                                }
+                              }}
+                              autoFocus
+                            />
+                          ) : (
+                            <button className="habit-stepper-value" type="button" title="Edit progress" onClick={() => startProgressEdit(habit)}>
+                              {formatCompletedAmount(completion.value)}
+                            </button>
+                          )}
+                          <button type="button" aria-label="Increase progress" title="Increase" onClick={() => updateProgressHabit(habit.id, 1)}>
+                            <Plus size={13} />
+                          </button>
+                        </div>
+                      ) : null}
+                      <button className="ghost-button" type="button" aria-label="Edit habit" title="Edit" onClick={() => editHabit(habit)}>
+                        <Pencil size={15} />
+                      </button>
+                      <button className="ghost-button" type="button" aria-label="Delete habit" title="Delete" onClick={() => archiveHabit(habit.id)}>
+                        <Trash2 size={15} />
+                      </button>
+                    </>
+                  )}
                 </div>
               );
             })
@@ -1323,7 +1533,9 @@ function App(): React.JSX.Element {
         />
       ) : null}
 
-      {settingsOpen ? <SettingsDialog settings={data.settings} onClose={() => setSettingsOpen(false)} onUpdate={updateSettings} /> : null}
+      {settingsOpen ? (
+        <SettingsDialog settings={data.settings} onClose={() => setSettingsOpen(false)} onDataImported={applyImportedData} onUpdate={updateSettings} />
+      ) : null}
     </main>
   );
 }
@@ -1553,17 +1765,38 @@ function CalendarDialog({
 function SettingsDialog({
   settings,
   onClose,
+  onDataImported,
   onUpdate,
 }: {
   settings: DotDaySettings;
   onClose: () => void;
+  onDataImported: (data: AkDailyData) => void;
   onUpdate: (settings: DotDaySettings) => void;
 }): React.JSX.Element {
+  const [dataStatus, setDataStatus] = React.useState('');
+
   function updateSetting<K extends keyof DotDaySettings>(key: K, value: DotDaySettings[K]): void {
     onUpdate({
       ...settings,
       [key]: value,
     });
+  }
+
+  async function exportBackup(): Promise<void> {
+    const result = await window.akDaily.exportData();
+    setDataStatus(result.ok ? 'Backup exported.' : result.error || 'Export canceled.');
+  }
+
+  async function importBackup(): Promise<void> {
+    const result = await window.akDaily.importData();
+
+    if (result.ok && result.data) {
+      onDataImported(result.data);
+      setDataStatus('Backup imported.');
+      return;
+    }
+
+    setDataStatus(result.error || 'Import canceled.');
   }
 
   return (
@@ -1612,6 +1845,14 @@ function SettingsDialog({
 
         <label className="setting-toggle">
           <span>
+            <strong>System notifications</strong>
+            <small>Also show a native notification for upcoming timed events.</small>
+          </span>
+          <input checked={settings.nativeNotifications} type="checkbox" onChange={(event) => updateSetting('nativeNotifications', event.target.checked)} />
+        </label>
+
+        <label className="setting-toggle">
+          <span>
             <strong>Auto-collapse on blur</strong>
             <small>Collapse DotDay when another window is focused.</small>
           </span>
@@ -1625,6 +1866,28 @@ function SettingsDialog({
           </span>
           <input checked={settings.launchAtStartup} type="checkbox" onChange={(event) => updateSetting('launchAtStartup', event.target.checked)} />
         </label>
+
+        <div className="setting-row">
+          <div className="setting-copy">
+            <strong>Data backup</strong>
+            <span>Local JSON</span>
+          </div>
+          <div className="settings-button-grid">
+            <button className="secondary-button" type="button" onClick={exportBackup}>
+              <Download size={15} />
+              Export
+            </button>
+            <button className="secondary-button" type="button" onClick={importBackup}>
+              <Upload size={15} />
+              Import
+            </button>
+            <button className="secondary-button wide" type="button" onClick={() => void window.akDaily.openDataFolder()}>
+              <FolderOpen size={15} />
+              Open data folder
+            </button>
+          </div>
+          {dataStatus ? <p className="settings-status">{dataStatus}</p> : null}
+        </div>
       </div>
     </div>
   );

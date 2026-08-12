@@ -16,11 +16,21 @@ export interface HabitDayAnalytics {
 
 export interface HabitInsights {
   weekCompletionRate: number | null;
+  previousWeekCompletionRate: number | null;
+  weekDelta: number | null;
   monthAverageCompletionRate: number | null;
   currentStreak: number;
   perfectDaysThisMonth: number;
+  bestHabit: HabitSpotlight | null;
+  weakestHabit: HabitSpotlight | null;
   weekDays: HabitDayAnalytics[];
   monthDays: HabitDayAnalytics[];
+}
+
+export interface HabitSpotlight {
+  habit: Habit;
+  completionRate: number;
+  effectiveDays: number;
 }
 
 export interface StreakStatus {
@@ -43,6 +53,7 @@ export interface HabitHistoryInsights {
   completionRate: number | null;
   completedDays: number;
   effectiveDays: number;
+  averageValueLabel: string | null;
   days: HabitHistoryDay[];
 }
 
@@ -262,6 +273,50 @@ function countPerfectDays(days: HabitDayAnalytics[]): number {
   return days.filter((day) => day.total > 0 && day.percent === 100).length;
 }
 
+function getHabitSpotlights(data: AkDailyData, days: Date[]): { bestHabit: HabitSpotlight | null; weakestHabit: HabitSpotlight | null } {
+  const spotlights = data.habits
+    .map((habit) => {
+      const ratios = days.reduce<number[]>((values, date) => {
+        const dateKey = toDateKey(date);
+
+        if (!isHabitActiveOnDate(habit, dateKey)) {
+          return values;
+        }
+
+        values.push(getHabitCompletion(habit, data.habitRecords[dateKey]?.[habit.id]).ratio);
+        return values;
+      }, []);
+
+      if (ratios.length === 0) {
+        return null;
+      }
+
+      return {
+        habit,
+        completionRate: Math.round((ratios.reduce((total, ratio) => total + ratio, 0) / ratios.length) * 100),
+        effectiveDays: ratios.length,
+      };
+    })
+    .filter((item): item is HabitSpotlight => Boolean(item));
+
+  if (spotlights.length === 0) {
+    return { bestHabit: null, weakestHabit: null };
+  }
+
+  const sorted = [...spotlights].sort((first, second) => {
+    if (first.completionRate !== second.completionRate) {
+      return second.completionRate - first.completionRate;
+    }
+
+    return second.effectiveDays - first.effectiveDays;
+  });
+
+  return {
+    bestHabit: sorted[0],
+    weakestHabit: sorted[sorted.length - 1],
+  };
+}
+
 function getCurrentStreak(data: AkDailyData, today: Date): number {
   let streak = 0;
   let cursor = new Date(today.getFullYear(), today.getMonth(), today.getDate());
@@ -330,13 +385,22 @@ export function getStreakStatus(data: AkDailyData, today: Date): StreakStatus {
 
 export function getHabitInsights(data: AkDailyData, today: Date, monthDate: Date): HabitInsights {
   const weekDays = getWeekDays(today).map((date) => getHabitDayAnalytics(data, date, today));
+  const previousWeekDays = getWeekDays(addDays(today, -7)).map((date) => getHabitDayAnalytics(data, date, today));
   const monthDays = getMonthDays(monthDate).map((date) => getHabitDayAnalytics(data, date, today));
+  const weekCompletionRate = averagePercent(weekDays);
+  const previousWeekCompletionRate = averagePercent(previousWeekDays);
+  const todayKey = toDateKey(today);
+  const spotlightDays = getMonthDays(monthDate).filter((date) => toDateKey(date) <= todayKey);
+  const spotlights = getHabitSpotlights(data, spotlightDays);
 
   return {
-    weekCompletionRate: averagePercent(weekDays),
+    weekCompletionRate,
+    previousWeekCompletionRate,
+    weekDelta: weekCompletionRate === null || previousWeekCompletionRate === null ? null : weekCompletionRate - previousWeekCompletionRate,
     monthAverageCompletionRate: averagePercent(monthDays),
     currentStreak: getCurrentStreak(data, today),
     perfectDaysThisMonth: countPerfectDays(monthDays),
+    ...spotlights,
     weekDays,
     monthDays,
   };
@@ -351,6 +415,7 @@ export function getHabitHistoryInsights(data: AkDailyData, habitId: string | nul
       completionRate: null,
       completedDays: 0,
       effectiveDays: 0,
+      averageValueLabel: null,
       days: [],
     };
   }
@@ -382,12 +447,22 @@ export function getHabitHistoryInsights(data: AkDailyData, habitId: string | nul
   const completedDays = days.filter((day) => day.completed).length;
   const effectiveDays = days.length;
   const averageCompletion = days.reduce((total, day) => total + day.percent, 0) / effectiveDays;
+  const progressValues = habit.type === 'progress'
+    ? days.map((day) => {
+        const completion = getHabitCompletion(habit, data.habitRecords[day.date]?.[habit.id]);
+        return completion.value;
+      })
+    : [];
+  const averageValue =
+    progressValues.length === 0 ? null : progressValues.reduce((total, value) => total + value, 0) / progressValues.length;
 
   return {
     habit,
     completionRate: effectiveDays === 0 ? null : Math.round(averageCompletion),
     completedDays,
     effectiveDays,
+    averageValueLabel:
+      averageValue === null ? null : `${formatHabitAmount(averageValue)}${habit.unit ? ` ${habit.unit}` : ''}`,
     days,
   };
 }
